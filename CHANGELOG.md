@@ -1,3 +1,16 @@
+## [1.0.1](https://github.com/BaconDroid/rakuyomi/compare/v1.0.0...v1.0.1) (2026-08-14)
+
+
+### Bug Fixes
+
+* **api:** propagate manga refresh failures ([400928f](https://github.com/BaconDroid/rakuyomi/commit/400928fcd7cf4dbf45ea533ba6deb842a355d7a2))
+* **build:** restore non-default shared build ([bfa8694](https://github.com/BaconDroid/rakuyomi/commit/bfa869447d3a566c4b44287e41f9f21707b90b62))
+* **db:** chunk chapter upserts by bind count ([eb15201](https://github.com/BaconDroid/rakuyomi/commit/eb152011bc2ea0da67602297d7cd3a03b7b44e89))
+* **downloads:** fix read-boundary comparison for mixed numbered/unnumbered chapters ([be46244](https://github.com/BaconDroid/rakuyomi/commit/be46244b2c9c8d9427da6a5e2242d6b483ad60d2))
+* **downloads:** handle unnumbered batch chapters ([5c8ad16](https://github.com/BaconDroid/rakuyomi/commit/5c8ad1627fa3b874538d53f822bda0e726d27d9e))
+* **koreader:** dismiss progress dialog on file-removal error ([c03fcc9](https://github.com/BaconDroid/rakuyomi/commit/c03fcc947e1b1ccc5732d6f4ca6a76ee6e3b4e0e))
+* **koreader:** use supported job feedback ([0ba4cda](https://github.com/BaconDroid/rakuyomi/commit/0ba4cda98d9b215fcaf25f8017272dbb0d4b4e45))
+
 # 1.0.0 (2026-07-31)
 
 
