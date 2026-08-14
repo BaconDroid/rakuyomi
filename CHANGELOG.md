@@ -1,3 +1,10 @@
+## [1.0.2](https://github.com/BaconDroid/rakuyomi/compare/v1.0.1...v1.0.2) (2026-08-14)
+
+
+### Bug Fixes
+
+* **api:** preserve remote cover URL when no local poster exists, add missing doc comments ([48ecb64](https://github.com/BaconDroid/rakuyomi/commit/48ecb6482d1a2009bbc9d5724efe9f58c4ff7c81))
+
 ## [1.0.1](https://github.com/BaconDroid/rakuyomi/compare/v1.0.0...v1.0.1) (2026-08-14)
 
 
