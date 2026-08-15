@@ -3,6 +3,7 @@
   "rust-analyzer.linkedProjects": ["backend/Cargo.toml"],
   "lldb.launch.sourceLanguages": ["rust"],
   "Lua.diagnostics.globals": ["G_defaults", "G_reader_settings"],
+  "Lua.workspace.ignoreDir": ["build", ".slim/worktrees"],
   "cSpell.words": [
     "Anilist",
     "Baka",
