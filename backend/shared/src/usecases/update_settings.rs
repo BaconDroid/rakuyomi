@@ -57,6 +57,7 @@ pub struct UpdateableSettings {
     chapter_title_format: ChapterTitleFormat,
     delete_downloaded_on_remove: bool,
     delete_downloaded_after_read: bool,
+    lnreader_enabled: bool,
 }
 
 fn clean_opt(s: Option<String>) -> Option<String> {
@@ -115,6 +116,7 @@ impl UpdateableSettings {
         settings.chapter_title_format = self.chapter_title_format;
         settings.delete_downloaded_on_remove = self.delete_downloaded_on_remove;
         settings.delete_downloaded_after_read = self.delete_downloaded_after_read;
+        settings.lnreader_enabled = self.lnreader_enabled;
     }
 }
 
@@ -154,6 +156,30 @@ impl From<&Settings> for UpdateableSettings {
             chapter_title_format: value.chapter_title_format,
             delete_downloaded_on_remove: value.delete_downloaded_on_remove,
             delete_downloaded_after_read: value.delete_downloaded_after_read,
+            lnreader_enabled: value.lnreader_enabled,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `From<&Settings>` must expose `lnreader_enabled` and `apply_updates`
+    /// must persist it — regression for commit 2544b7e.
+    #[test]
+    fn lnreader_enabled_survives_from_and_apply_updates() {
+        for enabled in [false, true] {
+            let source = Settings {
+                lnreader_enabled: enabled,
+                ..Settings::default()
+            };
+            let updateable = UpdateableSettings::from(&source);
+            assert_eq!(updateable.lnreader_enabled, enabled);
+
+            let mut target = Settings::default();
+            updateable.apply_updates(&mut target);
+            assert_eq!(target.lnreader_enabled, enabled);
         }
     }
 }
