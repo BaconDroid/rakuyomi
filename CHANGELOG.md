@@ -1,3 +1,51 @@
+# [1.1.0](https://github.com/BaconDroid/rakuyomi/compare/v1.0.2...v1.1.0) (2026-08-15)
+
+
+### Bug Fixes
+
+* **build:** package lnreader_worker alongside server ([0625135](https://github.com/BaconDroid/rakuyomi/commit/06251353bad689d0aa8213761ae0531bdcd95075))
+* **downloads:** respect batch limit without chapter numbers ([409c11c](https://github.com/BaconDroid/rakuyomi/commit/409c11c138ac8e605653bcdb7eca6018eff0f862))
+* **e2e:** avoid macOS-only Poetry markers on Linux ([aa32e90](https://github.com/BaconDroid/rakuyomi/commit/aa32e9031924c9ec7230d8b266e43801d1e567ad))
+* **e2e:** expose tkinter to Poetry tests ([aeece1b](https://github.com/BaconDroid/rakuyomi/commit/aeece1b4fcd09a5771221e792e410ddf45ec19e9))
+* **l10n:** regenerate catalogs from clean HEAD ([afc611b](https://github.com/BaconDroid/rakuyomi/commit/afc611b5d802efc370cc4f7ed948dedf3596b111))
+* **lnreader:** actually fix worker-binary CI test failures ([34eda1a](https://github.com/BaconDroid/rakuyomi/commit/34eda1a297caa9b6d5389aff8443ec80b83de5fe))
+* **lnreader:** also reject an empty plugin id when packaging ([215a861](https://github.com/BaconDroid/rakuyomi/commit/215a86111d7d30000733b752692d3089a240437f))
+* **lnreader:** bound CLI metadata extraction, declare worker Tokio features, make status round-trip exhaustive, restore translation whitespace/literals ([5148b2a](https://github.com/BaconDroid/rakuyomi/commit/5148b2a287c95e672566d631920d0a8efacf4d5d))
+* **lnreader:** bound in-process metadata extraction, fix worker-kill-on-Dead, guard build script ([cf98c0b](https://github.com/BaconDroid/rakuyomi/commit/cf98c0bdcb21513e9ec9f548b54cb9683f0fac94))
+* **lnreader:** give the packager CLI real subprocess isolation, not just a thread timeout ([59c5255](https://github.com/BaconDroid/rakuyomi/commit/59c525545885c43a27d9a641adba6b890a5d448d))
+* **lnreader:** harden JS SDK against untrusted plugins, fix review findings ([f3a7baf](https://github.com/BaconDroid/rakuyomi/commit/f3a7bafb9e282cbd0eb2627b09f84f732225f404))
+* **lnreader:** load paginated chapter lists ([bf69e8a](https://github.com/BaconDroid/rakuyomi/commit/bf69e8a49e4e3d265b8a489c99581088cb56c005))
+* **lnreader:** normalize space-separated plugin dates ([5b346e6](https://github.com/BaconDroid/rakuyomi/commit/5b346e671736e3dec8bf4ec0c6db9dcaf800aa21))
+* **lnreader:** preserve summary formatting while filtering CSS ([d3e3618](https://github.com/BaconDroid/rakuyomi/commit/d3e3618c3439234f438562fbbb23199c3167f916))
+* **lnreader:** propagate XCheckbox include/exclude defaults to settings ([d2b6d24](https://github.com/BaconDroid/rakuyomi/commit/d2b6d246d09267f1777d17a00e6ec8bc23f36576))
+* **lnreader:** remove stray BiDi control char from list_available_sources test fixtures ([a86537e](https://github.com/BaconDroid/rakuyomi/commit/a86537efde173134a881cd2f81897d6ea2737f2e))
+* **lnreader:** render chapter HTML and order chapters newest-first ([bb3beca](https://github.com/BaconDroid/rakuyomi/commit/bb3becafa9dfdec2f997da11fa91d39a84eaa633))
+* **lnreader:** retain safe description formatting ([616ed29](https://github.com/BaconDroid/rakuyomi/commit/616ed295745b32fdcaa5067f55fe15426e5f73db))
+* **lnreader:** sanitize manga descriptions (LNReader-only) ([972380a](https://github.com/BaconDroid/rakuyomi/commit/972380ad7c87d0b11ff8ac7e6b12fbaed04f2bc6))
+* **lnreader:** stamp chapter lang, raise bind limit, derive chapter_number fallback ([fe1a9a3](https://github.com/BaconDroid/rakuyomi/commit/fe1a9a3454942d31538087fcf9f03d78058ae4fb))
+* **settings:** defer lnreader source reload until restart ([d89a6d0](https://github.com/BaconDroid/rakuyomi/commit/d89a6d04d64cf56c4cf373d1535962cd2fe782c6))
+* **test:** ensure lnreader_worker binary builds during cargo test -p shared ([73dd7b4](https://github.com/BaconDroid/rakuyomi/commit/73dd7b401c4bc4b4049cd051cd406c35f11881d1))
+* **ui:** improve chapter and description interactions ([0bb8925](https://github.com/BaconDroid/rakuyomi/commit/0bb892550790d0536591db82a58161f9fc91a178))
+* **ui:** refresh chapter download state immediately ([298f03c](https://github.com/BaconDroid/rakuyomi/commit/298f03c83f9813f0ee69479faacb3a50dca0846a))
+* **ui:** replace missing progress dialog with InfoMessage ([085cdc1](https://github.com/BaconDroid/rakuyomi/commit/085cdc173f3e27f5d52fec29bcf5967a9823f7da))
+* **ui:** silence luacheck warnings in MangaInfoWidget.lua ([0748109](https://github.com/BaconDroid/rakuyomi/commit/07481090b3bc4017e155f575a7c44c2a4c733eaf))
+
+
+### Features
+
+* **lnreader:** apply saved XCheckbox include/exclude filters before searchNovels ([1206dd3](https://github.com/BaconDroid/rakuyomi/commit/1206dd3eb45e87066d8b2b9f10050701297a8233))
+* **lnreader:** preserve source metadata ([1163b8a](https://github.com/BaconDroid/rakuyomi/commit/1163b8a1eea36c6fbc9b46fb4ed2053854e6883a))
+* **settings:** expose and persist lnreader_enabled toggle in UI ([8d313cf](https://github.com/BaconDroid/rakuyomi/commit/8d313cf7535eaaeabca5a32fada04387e00ac02f))
+* **settings:** expose lnreader_supported capability and hide toggle when unavailable ([ffa5258](https://github.com/BaconDroid/rakuyomi/commit/ffa5258a4601897a2a0f92284cf0c92c84c16f4a))
+* **settings:** hot-reload sources when settings are updated ([26c859c](https://github.com/BaconDroid/rakuyomi/commit/26c859c1fd971942816fd6a0dc88b0e6ff5dac65))
+* **ui:** render formatted manga descriptions ([623a39c](https://github.com/BaconDroid/rakuyomi/commit/623a39c77d632f892ea6176ee4e063714b250995))
+
+
+### Reverts
+
+* Revert "fix(e2e): avoid macOS-only Poetry markers on Linux" ([ced687d](https://github.com/BaconDroid/rakuyomi/commit/ced687d8a334e61a9740d9df36c6e7e3804bf40c))
+* Revert "fix(e2e): expose tkinter to Poetry tests" ([108c88b](https://github.com/BaconDroid/rakuyomi/commit/108c88b17beab9a8f5b32a3fc35fd7796aa39926))
+
 ## [1.0.2](https://github.com/BaconDroid/rakuyomi/compare/v1.0.1...v1.0.2) (2026-08-14)
 
 
