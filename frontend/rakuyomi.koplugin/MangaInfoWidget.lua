@@ -9,6 +9,7 @@ local GestureRange = require("ui/gesturerange")
 local HorizontalGroup = require("ui/widget/horizontalgroup")
 local HorizontalSpan = require("ui/widget/horizontalspan")
 local ImageWidget = require("ui/widget/imagewidget")
+local ScrollHtmlWidget = require("ui/widget/scrollhtmlwidget")
 local ScrollTextWidget = require("ui/widget/scrolltextwidget")
 local TextViewer = require("ui/widget/textviewer")
 local LeftContainer = require("ui/widget/container/leftcontainer")
@@ -33,6 +34,185 @@ local Backend = require("Backend")
 local ErrorDialog = require("ErrorDialog")
 local calcLastReadText = require("utils/calcLastReadText")
 
+local ALLOWED_TAGS = {
+  p = true, br = true, hr = true,
+  b = true, strong = true, i = true, em = true, u = true,
+  h1 = true, h2 = true, h3 = true, h4 = true, h5 = true, h6 = true,
+  blockquote = true, ul = true, ol = true, li = true, a = true,
+}
+local VOID_TAGS = { br = true, hr = true }
+local REMOVE_CONTENT_TAGS = {
+  script = true, style = true, iframe = true, object = true,
+  embed = true, form = true,
+}
+local DROP_TAGS = { input = true, img = true }
+
+local DESCRIPTION_CSS = [[
+body { margin: 0; padding: 0; color: #000000; }
+a { color: inherit; text-decoration: underline; }
+]]
+
+local function escapeAttr(value)
+  return value:gsub("&", "&amp;"):gsub('"', "&quot;")
+end
+
+--- Sanitize a manga description so it can be rendered by ScrollHtmlWidget.
+--- Whitelist-only: removes script/style/iframe/object/embed/form/input/img,
+--- all attributes except a safe href, and HTML comments.
+--- @param text string
+--- @return string|nil, boolean
+local function sanitizeDescriptionHtml(text)
+  if not text or text == "" then
+    return nil, false
+  end
+
+  -- Fast path: nothing looks like markup.
+  if not text:find("<[^>]+>") then
+    return nil, false
+  end
+
+  local out = {}
+  local pos = 1
+  local len = #text
+  local skip_depth = 0
+  local skip_tag
+
+  while pos <= len do
+    local lt = text:find("<", pos)
+    if not lt then
+      if skip_depth == 0 then
+        table.insert(out, text:sub(pos))
+      end
+      break
+    end
+
+    if skip_depth == 0 then
+      table.insert(out, text:sub(pos, lt - 1))
+    end
+
+    if text:sub(lt, lt + 3) == "<!--" then
+      local close = text:find("%-%->", lt + 4)
+      if close then
+        pos = close + 3
+      else
+        pos = len + 1
+      end
+    else
+      local gt = text:find(">", lt)
+      if not gt then
+        if skip_depth == 0 then
+          table.insert(out, text:sub(lt))
+        end
+        break
+      end
+
+      local tag_content = text:sub(lt + 1, gt - 1)
+      pos = gt + 1
+
+      local is_closing = tag_content:sub(1, 1) == "/"
+      local raw_name = tag_content:match("^/?%s*([%a][%w]*)")
+      if raw_name then
+        local tag_name = raw_name:lower()
+        local self_closing = tag_content:sub(-1) == "/"
+
+        if skip_depth > 0 then
+          if tag_name == skip_tag then
+            if is_closing then
+              skip_depth = skip_depth - 1
+              if skip_depth == 0 then
+                skip_tag = nil
+              end
+            elseif not self_closing then
+              skip_depth = skip_depth + 1
+            end
+          end
+        elseif REMOVE_CONTENT_TAGS[tag_name] then
+          if not is_closing and not self_closing then
+            skip_tag = tag_name
+            skip_depth = 1
+          end
+        elseif DROP_TAGS[tag_name] then
+          -- silently drop this void/self-closing tag
+          do end -- luacheck: ignore 541
+        elseif ALLOWED_TAGS[tag_name] then
+          if is_closing then
+            if not VOID_TAGS[tag_name] then
+              table.insert(out, "</" .. tag_name .. ">")
+            end
+          else
+            if tag_name == "a" then
+              local href = tag_content:match('%s[Hh][Rr][Ee][Ff]%s*=%s*"([^"]*)"')
+                  or tag_content:match("%s[Hh][Rr][Ee][Ff]%s*=%s*'([^']*)'")
+                  or tag_content:match("%s[Hh][Rr][Ee][Ff]%s*=%s*([^%s>]+)")
+              local keep = false
+              if href then
+                local scheme = href:match("^([%a][%a%d%+%-.]*):")
+                scheme = scheme and scheme:lower() or ""
+                keep = scheme == "http" or scheme == "https" or scheme == "mailto"
+              end
+
+              if keep then
+                table.insert(out, '<a href="' .. escapeAttr(href) .. '">')
+              else
+                table.insert(out, "<a>")
+              end
+            else
+              table.insert(out, "<" .. tag_name .. ">")
+            end
+          end
+        end
+      end
+    end
+  end
+
+  local sanitized = table.concat(out)
+  if not sanitized:find("<[^>]+>") then
+    return nil, false
+  end
+  return sanitized, true
+end
+
+--- Convert sanitized description HTML to readable TextViewer text.
+--- @param text string
+--- @return string
+local function descriptionToText(text)
+  local html_body, has_html = sanitizeDescriptionHtml(text)
+  if not has_html then
+    return text
+  end
+
+  html_body = html_body:gsub("<%s*[Bb][Rr]%s*/?%s*>", "\n")
+  html_body = html_body:gsub("<%s*[Hh][Rr]%s*/?%s*>", "\n")
+  html_body = html_body:gsub("</%s*[Pp]%s*>", "\n\n")
+  html_body = html_body:gsub("</%s*[Hh][1-6]%s*>", "\n\n")
+  html_body = html_body:gsub("</%s*[Ll][Ii]%s*>", "\n")
+  html_body = html_body:gsub("<[^>]+>", "")
+
+  -- Decode the entities most commonly found in API descriptions. Numeric
+  -- entities are deliberately limited to printable ASCII characters here;
+  -- this keeps the conversion LuaJIT-safe without introducing a parser.
+  html_body = html_body:gsub("&#(%d+);", function(value)
+    local code = tonumber(value)
+    if code and code >= 32 and code <= 126 then
+      return string.char(code)
+    end
+    return " "
+  end)
+  html_body = html_body:gsub("&#x([%da-fA-F]+);", function(value)
+    local code = tonumber(value, 16)
+    if code and code >= 32 and code <= 126 then
+      return string.char(code)
+    end
+    return " "
+  end)
+  local entities = {
+    ["&quot;"] = '"', ["&apos;"] = "'", ["&amp;"] = "&",
+    ["&lt;"] = "<", ["&gt;"] = ">", ["&nbsp;"] = " ",
+  }
+  html_body = html_body:gsub("&%a+;", entities)
+  return html_body
+end
+
 local function parse_iso8601(str)
   local year, month, day, hour, min, sec =
       str:match("(%d+)%-(%d+)%-(%d+)T(%d+):(%d+):(%d+)")
@@ -50,6 +230,55 @@ local function parse_iso8601(str)
     sec = sec,
     isdst = false,
   })
+end
+
+local function newDescriptionViewer(description)
+  local viewer = TextViewer:new {
+    title = _("Description"),
+    text = descriptionToText(description or ""),
+    text_type = "book_info",
+  }
+
+  viewer.scroll_text_w.ges_events.TapScrollText = nil
+
+  -- Inside the text, a left/right tap pages through the description. A tap
+  -- outside still closes the reader; TextViewer's stock pan remains enabled.
+  function viewer:onTapClose(arg, ges_ev)
+    if ges_ev.pos:intersectWith(self.textw.dimen) then
+      if ges_ev.pos.x < Screen:getWidth() / 2 then
+        self.scroll_text_w:scrollText(-1)
+      else
+        self.scroll_text_w:scrollText(1)
+      end
+      return true
+    end
+    return TextViewer.onTapClose(self, arg, ges_ev)
+  end
+
+  function viewer:onSwipe(_arg, ges_ev)
+    if ges_ev.direction == "north" then
+      self.scroll_text_w:scrollText(1)
+    elseif ges_ev.direction == "south" then
+      self.scroll_text_w:scrollText(-1)
+    end
+    return true
+  end
+
+  return viewer
+end
+
+local function configureDescriptionPreview(scroll_widget)
+  function scroll_widget:onTapScrollText(_, ges_ev)
+    self:scrollText(ges_ev.pos.x < Screen:getWidth() / 2 and -1 or 1)
+    return true
+  end
+  function scroll_widget:onScrollText(_, ges_ev)
+    if ges_ev.direction == "north" then self:scrollText(1)
+    elseif ges_ev.direction == "south" then self:scrollText(-1) end
+    return true
+  end
+  scroll_widget.ges_events.PanText = nil
+  scroll_widget.ges_events.PanReleaseText = nil
 end
 
 --- @class FocusManager
@@ -481,21 +710,47 @@ function MangaInfoWidget:genSummaryGroup(width, manga)
   end
 
   local text_padding = Size.padding.default
-  self.input_note = ScrollTextWidget:new {
-    text = manga.description or "N/A",
-    face = self.medium_font_face,
-    width = width - self.padding * 3,
-    height = math.floor(height),
-    dialog = TextViewer:new {
-      title = _("Description"),
-      text = manga.description
-    },
-    scroll = true,
-    bordersize = Size.border.default,
-    focused = false,
-    padding = text_padding,
-    parent = self,
-  }
+  local widget_width = width - self.padding * 3
+  local widget_height = math.floor(height)
+  local description = manga.description or "N/A"
+
+  local html_body, has_html = sanitizeDescriptionHtml(description)
+  local scroll_widget
+
+  if has_html then
+    local ok, widget = pcall(function()
+      return ScrollHtmlWidget:new {
+        html_body = html_body,
+        css = DESCRIPTION_CSS,
+        default_font_size = self.medium_font_face.size,
+        width = widget_width,
+        height = widget_height,
+        dialog = self,
+      }
+    end)
+    if ok then
+      scroll_widget = widget
+    end
+  end
+
+  if not scroll_widget then
+    scroll_widget = ScrollTextWidget:new {
+      text = description,
+      face = self.medium_font_face,
+      width = widget_width,
+      height = widget_height,
+      dialog = newDescriptionViewer(description),
+      scroll = true,
+      bordersize = Size.border.default,
+      focused = false,
+      padding = text_padding,
+      parent = self,
+    }
+  end
+
+  configureDescriptionPreview(scroll_widget)
+
+  self.input_note = scroll_widget
   table.insert(self.layout, { self.input_note })
 
   return VerticalGroup:new {
@@ -507,18 +762,13 @@ function MangaInfoWidget:genSummaryGroup(width, manga)
   }
 end
 
-function MangaInfoWidget:onSwipe(_, ges_ev)
-  if ges_ev.direction == "south" then
-    -- Allow easier closing with swipe down
+function MangaInfoWidget:onSwipe(_arg, ges_ev)
+  if ges_ev.direction == "south" or ges_ev.direction == "east" then
     self:onClose()
+    return true
   elseif ges_ev.direction == "west" or ges_ev.direction == "north" then
-    UIManager:show(TextViewer:new {
-      title = _("Description"),
-      text = self.manga.description
-    })
-  elseif ges_ev.direction == "east" or ges_ev.direction == "west" or ges_ev.direction == "north" then
-    -- no use for now
-    do end -- luacheck: ignore 541
+    UIManager:show(newDescriptionViewer(self.manga.description or "N/A"))
+    return true
   else     -- diagonal swipe
     -- trigger full refresh
     UIManager:setDirty(nil, "full", nil, true)
@@ -528,7 +778,7 @@ function MangaInfoWidget:onSwipe(_, ges_ev)
   end
 end
 
-function MangaInfoWidget:onMultiSwipe(_, _)
+function MangaInfoWidget:onMultiSwipe(_, _ges_ev)
   -- For consistency with other fullscreen widgets where swipe south can't be
   -- used to close and where we then allow any multiswipe to close, allow any
   -- multiswipe to close this widget too.

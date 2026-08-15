@@ -374,6 +374,17 @@ Settings.setting_value_definitions = {
   },
   {
     nil,
+    { type = 'divider', title = _("Sources") }
+  },
+  {
+    'lnreader_enabled',
+    {
+      type = 'boolean',
+      title = _("Enable LNReader/JS sources"),
+    }
+  },
+  {
+    nil,
     { type = 'divider', title = _("Storage") }
   },
   {
@@ -582,6 +593,15 @@ function Settings:init()
   for __, tuple in ipairs(Settings.setting_value_definitions) do
     local key = tuple[1]
     local definition = tuple[2]
+
+    if key == 'lnreader_enabled' and not (self.capabilities and self.capabilities.lnreader_supported) then
+      table.insert(vertical_group, TextWidget:new {
+        text = _("LNReader/JS sources disabled (feature not compiled)"),
+        face = Font:getFace("cfont", 18),
+      })
+      goto continue
+    end
+
     if definition.type == 'divider' then
       table.insert(vertical_group, TextWidget:new {
         text = definition.title,
@@ -629,6 +649,7 @@ function Settings:init()
         end
       })
     end
+    ::continue::
   end
 
   self.title_bar = TitleBar:new {
@@ -765,8 +786,17 @@ function Settings:fetchAndShow(on_return_callback)
     return
   end
 
+  -- Capabilities is best-effort metadata (e.g. whether the server supports
+  -- LNReader, see `self.capabilities and self.capabilities.lnreader_supported`
+  -- above): a server that doesn't expose it -- older builds, or ones
+  -- compiled without LNReader support -- shouldn't block Settings from
+  -- opening at all, just fall back to a nil capabilities value.
+  local capabilities_response = Backend.getCapabilities()
+  local capabilities = capabilities_response.type ~= 'ERROR' and capabilities_response.body or nil
+
   local ui = Settings:new {
     settings = response.body,
+    capabilities = capabilities,
     on_return_callback = on_return_callback
   }
   ui.on_return_callback = on_return_callback

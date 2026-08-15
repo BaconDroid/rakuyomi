@@ -220,6 +220,7 @@ end
 --- @field id string The ID of the source.
 --- @field name string The name of the source.
 --- @field version number The version of the source.
+--- @field displayVersion string|nil Human-readable source version.
 --- @field source_of_source string|nil The domain source load source.
 
 --- @class Manga
@@ -873,6 +874,17 @@ end
 --- @field cookie_sync_server_url string|nil
 --- @field cookie_sync_device_name string|nil
 --- @field cookie_sync_chat_id number|nil
+
+--- @class Capabilities
+--- @field lnreader_supported boolean Whether the backend was compiled with LNReader/JS source support.
+
+--- Reads the server capabilities.
+--- @return SuccessfulResponse<Capabilities>|ErrorResponse
+function Backend.getCapabilities()
+  return Backend.requestJson({
+    path = "/capabilities"
+  })
+end
 
 --- Reads the application settings.
 --- @return SuccessfulResponse<Settings>|ErrorResponse

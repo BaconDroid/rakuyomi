@@ -11,6 +11,7 @@ use crate::AppError;
 
 pub fn routes() -> Router<State> {
     Router::new()
+        .route("/capabilities", get(get_capabilities))
         .route("/settings", get(get_settings))
         .route("/settings", put(update_settings))
         .route("/settings/mount-tmpfs", post(mount_tmpfs))
@@ -25,6 +26,17 @@ pub fn routes() -> Router<State> {
             "/settings/oauth/status/{session_id}",
             get(poll_oauth_status),
         )
+}
+
+#[derive(Serialize)]
+struct CapabilitiesResponse {
+    lnreader_supported: bool,
+}
+
+async fn get_capabilities() -> Json<CapabilitiesResponse> {
+    Json(CapabilitiesResponse {
+        lnreader_supported: cfg!(feature = "lnreader"),
+    })
 }
 
 async fn get_settings(

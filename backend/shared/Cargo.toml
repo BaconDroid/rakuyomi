@@ -12,9 +12,16 @@ serde_json = "1.0.150"
 url = { version = "2.5.8", features = ["serde"] }
 
 [features]
-default = ["all"]
+default = ["all", "lnreader"]
 all = ["sqlx"]
 ffi = []
+# LNReader/JS source execution mode -- see docs/lnreader/REFERENCE.md §2.1.
+# Default-on during LNReader's active real-world testing period (deliberate,
+# see the same doc's §2.2 for the runtime-toggle half of this two-gate
+# design). `boa_gc` is only needed by this mode's cheerio/JS-runtime store
+# (see sdk_lnreader/cheerio.rs's `Store`), hence gating it as an optional
+# dependency here rather than always compiling it in.
+lnreader = ["dep:boa_gc"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [dependencies]
@@ -29,8 +36,12 @@ serde_json = "1.0.150"
 html-escape = "0.2.14"
 reqwest = { version = "0.13.4", default-features = false, features = [
   "blocking",
+  "brotli",
+  "deflate",
   "form",
+  "gzip",
   "json",
+  "multipart",
   "query",
   "rustls-no-provider",
   "stream",
@@ -77,6 +88,7 @@ aidoku = { git = "https://github.com/Aidoku/aidoku-rs", branch = "main", default
 raqote = "0.8.5"
 font-kit = "0.14.3"
 boa_engine = "0.21.1"
+boa_gc = { version = "0.21.1", optional = true }
 imageproc = "0.27.0"
 ab_glyph = "0.2.32"
 markdown = "1.0.0"
@@ -92,6 +104,19 @@ nix = { version = "0.31.3", default-features = false, features = ["mount", "fs"]
 [dev-dependencies]
 criterion = { version = "0.5", features = ["async_tokio"] }
 pprof = { version = "0.15", features = ["criterion", "flamegraph"] }
+# Required by end-to-end tests in `source::sdk_lnreader::tests` (the
+# `cheerio_fixture_plugin_end_to_end` and `hung_worker_times_out_and_respawns`
+# tests) which launch a real `lnreader_worker` subprocess. This dev-dependency
+# only links `lnreader_worker`'s library part, not its binary -- see
+# `worker_binary_path()`'s doc comment (in `source/sdk_lnreader/mod.rs`) for
+# how the tests actually build and locate a real executable; a `[[bin]]`
+# redeclaration here to force cargo to place one at a well-known path was
+# tried and reverted twice (see git history) -- once because it collided
+# with the real `lnreader_worker` package's own output filename, and again
+# because `cargo test` never uplifts a package's own bin targets to a
+# friendly `target/<profile>/<name>` path the way `cargo build` does, so
+# there was no reliable well-known path to find in the first place.
+lnreader_worker = { path = "../lnreader_worker" }
 
 [[bench]]
 name = "chapter_downloader_benchmark"
