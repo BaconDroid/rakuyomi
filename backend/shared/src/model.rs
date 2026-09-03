@@ -378,6 +378,21 @@ pub struct PlaylistManga {
     pub manga_id: String,
 }
 
+/// A reading status definition (e.g., Unread, Reading, Completed).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReadingStatus {
+    pub id: i64,
+    pub name: String,
+}
+
+/// A manga's assigned reading status.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MangaReadingStatus {
+    pub source_id: String,
+    pub manga_id: String,
+    pub status_id: i64,
+}
+
 /// The result of an install request. A multi-source keiyoushi APK asks the
 /// user which languages to install before anything is written to disk.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
