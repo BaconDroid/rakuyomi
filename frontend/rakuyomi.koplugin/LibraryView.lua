@@ -92,6 +92,8 @@ function LibraryView:init()
 
   self.mangas_raw = self.mangas
   self.favorite_search_keyword = nil
+  self.active_status_filter = G_reader_settings:readSetting("rakuyomi_status_filter", {})
+  self.count_notify = 0
   -- self.current_playlist = nil
 
   self:patchTitleBar(0)
@@ -161,7 +163,13 @@ function LibraryView:fetchMangas(cleanup)
   if self.current_playlist then
     response = Backend.getMangasInPlaylist(self.current_playlist.id)
   else
-    response = Backend.getMangasInLibrary()
+    local status_filter = self.active_status_filter
+      or G_reader_settings:readSetting("rakuyomi_status_filter", {})
+    if #status_filter > 0 then
+      response = Backend.getMangasByStatus(status_filter)
+    else
+      response = Backend.getMangasInLibrary()
+    end
   end
 
   if response.type == 'ERROR' then
@@ -191,6 +199,7 @@ function LibraryView:fetchCountNotification()
   end
 
   local count_notify = response.body
+  self.count_notify = count_notify
   self:patchTitleBar(count_notify)
 
   UIManager:setDirty(self.show_parent, "ui", self.dimen)
@@ -207,6 +216,8 @@ function LibraryView:patchTitleBar(count_notify)
   local left_icon_size = Screen:scaleBySize(DGENERIC_ICON_SIZE * left_icon_size_ratio)
   local right_icon_size = Screen:scaleBySize(DGENERIC_ICON_SIZE * right_icon_size_ratio)
   local button_padding = Screen:scaleBySize(11)
+
+  local status_filter_count = (self.active_status_filter and #self.active_status_filter) or 0
 
   self.title_bar.left_button = HorizontalGroup:new {
     IconButton:new {
@@ -297,6 +308,24 @@ function LibraryView:patchTitleBar(count_notify)
           UIManager:show(dialog)
         end)
       end
+    },
+    VerticalGroup:new {
+      Button:new {
+        text = status_filter_count > 0 and (Icons.FA_FILTER .. status_filter_count) or Icons.FA_FILTER,
+        face = SMALL_FONT_FACE,
+        bordersize = 0,
+        enabled = true,
+        width = left_icon_size,
+        height = left_icon_size,
+        text_font_size = 16,
+        text_font_bold = false,
+        callback = function()
+          self:openStatusFilterDialog()
+        end,
+      },
+      VerticalSpan:new {
+        width = left_icon_size / 2
+      },
     },
   }
 
@@ -1259,6 +1288,50 @@ function LibraryView:openSettingsSearchDialog()
   }
 
   UIManager:show(dialog)
+end
+
+--- @private
+function LibraryView:openStatusFilterDialog()
+  Trapper:wrap(function()
+    local response = Backend.getReadingStatuses()
+    if response.type == 'ERROR' then
+      ErrorDialog:show(response.message)
+      return
+    end
+
+    local options = {}
+    for _, status in ipairs(response.body) do
+      table.insert(options, {
+        id = status.id,
+        name = status.name,
+      })
+    end
+
+    local dialog = CheckboxDialog:new {
+      title = _("Filter by reading status"),
+      current = self.active_status_filter,
+      options = options,
+      update_callback = function(value)
+        G_reader_settings:saveSetting("rakuyomi_status_filter", value)
+        self.active_status_filter = value
+
+        local mangas = self:fetchMangas()
+        if not mangas then
+          return
+        end
+
+        self.mangas_raw = mangas
+        self.favorite_search_keyword = nil
+        self.mangas = mangas
+
+        self:updateItems()
+        self:patchTitleBar(self.count_notify)
+        UIManager:setDirty(self.show_parent, "ui", self.dimen)
+      end,
+    }
+
+    UIManager:show(dialog)
+  end)
 end
 
 --- @private
