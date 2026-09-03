@@ -1896,6 +1896,202 @@ impl Database {
 
         Ok(mangas)
     }
+
+    /// Returns all available reading statuses.
+    pub async fn get_reading_statuses(&self) -> Result<Vec<crate::model::ReadingStatus>> {
+        let rows = sqlx::query_as!(
+            crate::model::ReadingStatus,
+            r#"
+            SELECT id, name
+            FROM reading_statuses
+            ORDER BY id ASC
+            "#
+        )
+        .fetch_all(&*self.pool.read().await)
+        .await?;
+
+        Ok(rows)
+    }
+
+    /// Sets or updates a manga's reading status (upsert).
+    pub async fn set_manga_status(
+        &self,
+        source_id: &str,
+        manga_id: &str,
+        status_id: i64,
+    ) -> Result<()> {
+        sqlx::query!(
+            r#"
+            INSERT INTO manga_reading_status (source_id, manga_id, status_id)
+            VALUES (?1, ?2, ?3)
+            ON CONFLICT (source_id, manga_id) DO UPDATE SET status_id = excluded.status_id
+            "#,
+            source_id,
+            manga_id,
+            status_id
+        )
+        .execute(&*self.pool.read().await)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Removes a manga's reading status assignment.
+    pub async fn remove_manga_status(&self, source_id: &str, manga_id: &str) -> Result<()> {
+        sqlx::query!(
+            r#"
+            DELETE FROM manga_reading_status
+            WHERE source_id = ?1 AND manga_id = ?2
+            "#,
+            source_id,
+            manga_id
+        )
+        .execute(&*self.pool.read().await)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Returns mangas filtered by reading status IDs, sorted by status then library sort mode.
+    pub async fn get_mangas_by_status(
+        &self,
+        status_ids: &[i64],
+        source_collection: &impl SourceCollection,
+        library_sorting_mode: &crate::settings::LibrarySortingMode,
+    ) -> Result<Vec<Manga>> {
+        if status_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Build the IN clause placeholders.
+        let placeholders: Vec<String> = (0..status_ids.len())
+            .map(|i| format!("?{}", i + 1))
+            .collect();
+        let in_clause = placeholders.join(", ");
+
+        let library_order = match library_sorting_mode {
+            crate::settings::LibrarySortingMode::Ascending => "mrs.rowid",
+            crate::settings::LibrarySortingMode::Descending => "mrs.rowid DESC",
+            crate::settings::LibrarySortingMode::TitleAsc => "mi.title COLLATE NOCASE ASC",
+            crate::settings::LibrarySortingMode::TitleDesc => "mi.title COLLATE NOCASE DESC",
+            crate::settings::LibrarySortingMode::UnreadAsc => "unread_chapters_count ASC",
+            crate::settings::LibrarySortingMode::UnreadDesc => "unread_chapters_count DESC",
+            crate::settings::LibrarySortingMode::LastReadAsc => "lti.last_read_time ASC NULLS LAST",
+            crate::settings::LibrarySortingMode::LastReadDesc => "lti.last_read_time DESC NULLS LAST",
+            crate::settings::LibrarySortingMode::SourceAsc => {
+                "mrs.source_id COLLATE NOCASE ASC, mi.title COLLATE NOCASE ASC"
+            }
+            crate::settings::LibrarySortingMode::SourceDesc => {
+                "mrs.source_id COLLATE NOCASE DESC, mi.title COLLATE NOCASE DESC"
+            }
+        };
+
+        let sql = format!(
+            r#"
+            WITH last_read AS (
+                SELECT
+                    ci.source_id,
+                    ci.manga_id,
+                    MAX(ci.chapter_number) AS last_read_chapter
+                FROM chapter_informations ci
+                JOIN chapter_state cs
+                    ON ci.source_id = cs.source_id
+                    AND ci.manga_id = cs.manga_id
+                    AND ci.chapter_id = cs.chapter_id
+                LEFT JOIN manga_state ms
+                    ON ms.source_id = ci.source_id AND ms.manga_id = ci.manga_id
+                WHERE (ms.preferred_scanlator IS NULL
+                OR ci.scanlator = ms.preferred_scanlator
+                OR ci.scanlator IS NULL)
+                AND cs.read = 1
+                GROUP BY ci.source_id, ci.manga_id
+            ),
+            last_time_interacted AS (
+                SELECT
+                    ci.source_id,
+                    ci.manga_id,
+                    COALESCE(MAX(cs.last_read), 0) AS last_read_time
+                FROM chapter_informations ci
+                JOIN chapter_state cs
+                    ON ci.source_id = cs.source_id
+                    AND ci.manga_id = cs.manga_id
+                    AND ci.chapter_id = cs.chapter_id
+                LEFT JOIN manga_state ms
+                    ON ms.source_id = ci.source_id AND ms.manga_id = ci.manga_id
+                WHERE (ms.preferred_scanlator IS NULL
+                OR ci.scanlator = ms.preferred_scanlator
+                OR ci.scanlator IS NULL)
+                AND cs.last_read IS NOT NULL
+                GROUP BY ci.source_id, ci.manga_id
+            )
+            SELECT
+                mrs.source_id,
+                mrs.manga_id,
+                mi.title,
+                mi.author,
+                mi.artist,
+                mi.cover_url,
+                COUNT(ci.chapter_number) AS unread_chapters_count,
+                lti.last_read_time AS last_read,
+                COALESCE(ms.viewer, md.viewer, 0) AS viewer,
+                CASE WHEN ms.viewer IS NOT NULL THEN 1 ELSE 0 END AS state_viewer,
+                mrs.status_id
+            FROM manga_reading_status mrs
+            JOIN manga_informations mi
+                ON mi.source_id = mrs.source_id AND mi.manga_id = mrs.manga_id
+            LEFT JOIN manga_state ms
+                ON ms.source_id = mrs.source_id AND ms.manga_id = mrs.manga_id
+            LEFT JOIN manga_details md
+                ON md.source_id = mrs.source_id AND md.id = mrs.manga_id
+            LEFT JOIN last_read lr
+                ON lr.source_id = mrs.source_id AND lr.manga_id = mrs.manga_id
+            LEFT JOIN last_time_interacted lti
+                ON lti.source_id = mrs.source_id AND lti.manga_id = mrs.manga_id
+            LEFT JOIN chapter_informations ci
+                ON ci.source_id = mrs.source_id
+                AND ci.manga_id = mrs.manga_id
+                AND (ms.preferred_scanlator IS NULL OR ci.scanlator = ms.preferred_scanlator OR ci.scanlator IS NULL)
+                AND ci.chapter_number > COALESCE(lr.last_read_chapter, -1)
+            WHERE mrs.status_id IN ({in_clause})
+            GROUP BY mrs.source_id, mrs.manga_id, lti.last_read_time, mrs.status_id
+            ORDER BY mrs.status_id ASC, {library_order}
+            "#
+        );
+
+        let mut query =
+            sqlx::query_as::<_, MangaLibraryRowWithReadCount>(sqlx::AssertSqlSafe(&*sql));
+        for &status_id in status_ids {
+            query = query.bind(status_id);
+        }
+        let rows = query.fetch_all(&*self.pool.read().await).await?;
+
+        let mangas = rows
+            .into_iter()
+            .filter_map(|row| {
+                let source = source_collection.get_by_id(&SourceId::new(row.source_id.clone()))?;
+                let info = MangaInformation {
+                    id: MangaId::from_strings(row.source_id, row.manga_id),
+                    title: row.title,
+                    author: row.author,
+                    artist: row.artist,
+                    cover_url: row.cover_url.and_then(|url| Url::parse(&url).ok()),
+                    viewer: MangaViewer::from(row.viewer.unwrap_or(0) as u8),
+                };
+
+                Some(Manga {
+                    source_information: SourceInformation::from(source.manifest()),
+                    information: info,
+                    state: MangaState::default(),
+                    unread_chapters_count: row.unread_chapters_count.map(|v| v as usize),
+                    last_read: row.last_read,
+                    in_library: true,
+                    state_viewer: row.state_viewer != 0,
+                })
+            })
+            .collect();
+
+        Ok(mangas)
+    }
 }
 
 /// Represents a manga entry in the user's library, joined with its information
@@ -1930,6 +2126,10 @@ pub struct MangaLibraryRowWithReadCount {
     /// Effective viewer: COALESCE(manga_state.viewer, manga_informations.viewer, 0)
     pub viewer: Option<i64>,
     pub state_viewer: i64,
+
+    /// Reading status ID (only selected by reading-status queries, None elsewhere)
+    #[sqlx(default)]
+    pub status_id: Option<i64>,
 }
 
 #[derive(sqlx::FromRow)]
