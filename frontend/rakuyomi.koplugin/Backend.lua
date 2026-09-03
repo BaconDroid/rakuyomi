@@ -1248,6 +1248,56 @@ function Backend.removeMangaFromPlaylist(playlist_id, source_id, manga_id)
   })
 end
 
+--- @class ReadingStatus
+--- @field id number
+--- @field name string
+
+--- Fetch all available reading statuses.
+--- @return SuccessfulResponse<ReadingStatus[]>|ErrorResponse
+function Backend.getReadingStatuses()
+  return Backend.requestJson({
+    path = "/reading-statuses",
+  })
+end
+
+--- Set a manga's reading status.
+--- @param source_id string
+--- @param manga_id string
+--- @param status_id number
+--- @return SuccessfulResponse<nil>|ErrorResponse
+function Backend.setMangaStatus(source_id, manga_id, status_id)
+  return Backend.requestJson({
+    path = "/mangas/" .. source_id .. "/" .. util.urlEncode(manga_id) .. "/status",
+    method = 'PUT',
+    body = { status_id = status_id },
+  })
+end
+
+--- Remove a manga's reading status.
+--- @param source_id string
+--- @param manga_id string
+--- @return SuccessfulResponse<nil>|ErrorResponse
+function Backend.removeMangaStatus(source_id, manga_id)
+  return Backend.requestJson({
+    path = "/mangas/" .. source_id .. "/" .. util.urlEncode(manga_id) .. "/status",
+    method = 'DELETE',
+  })
+end
+
+--- Fetch mangas filtered by reading status IDs.
+--- @param status_ids number[]
+--- @return SuccessfulResponse<Manga[]>|ErrorResponse
+function Backend.getMangasByStatus(status_ids)
+  local query_parts = {}
+  for _, id in ipairs(status_ids) do
+    table.insert(query_parts, "status=" .. id)
+  end
+  local query_string = table.concat(query_parts, "&")
+  return Backend.requestJson({
+    path = "/mangas/by-status?" .. query_string,
+  })
+end
+
 --- @class CookieSyncStatus
 --- @field paired boolean
 --- @field server_url string|nil
