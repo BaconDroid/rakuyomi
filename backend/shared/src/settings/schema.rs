@@ -114,6 +114,25 @@ pub enum LibrarySortingMode {
     SourceDesc,
 }
 
+impl LibrarySortingMode {
+    /// Returns the ORDER BY clause for library manga queries.
+    /// `table_alias` is the base table alias ("ml" for library, "pm" for playlists).
+    pub fn order_by_clause(&self, table_alias: &str) -> String {
+        match self {
+            Self::Ascending => format!("ORDER BY {table_alias}.rowid"),
+            Self::Descending => format!("ORDER BY {table_alias}.rowid DESC"),
+            Self::TitleAsc => "ORDER BY mi.title COLLATE NOCASE ASC".into(),
+            Self::TitleDesc => "ORDER BY mi.title COLLATE NOCASE DESC".into(),
+            Self::UnreadAsc => "ORDER BY unread_chapters_count ASC".into(),
+            Self::UnreadDesc => "ORDER BY unread_chapters_count DESC".into(),
+            Self::LastReadAsc => "ORDER BY lti.last_read_time ASC NULLS LAST".into(),
+            Self::LastReadDesc => "ORDER BY lti.last_read_time DESC NULLS LAST".into(),
+            Self::SourceAsc => format!("ORDER BY {table_alias}.source_id COLLATE NOCASE ASC, mi.title COLLATE NOCASE ASC"),
+            Self::SourceDesc => format!("ORDER BY {table_alias}.source_id COLLATE NOCASE DESC, mi.title COLLATE NOCASE DESC"),
+        }
+    }
+}
+
 #[derive(Copy, Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum LibraryViewMode {
