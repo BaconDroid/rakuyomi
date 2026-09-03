@@ -199,7 +199,7 @@ impl Database {
         source_collection: &impl SourceCollection,
         library_sorting_mode: &crate::settings::LibrarySortingMode,
     ) -> Result<Vec<Manga>> {
-        let order_by = library_sorting_mode.order_by_clause("ml");
+        let order_by = library_sorting_mode.order_by_clause(crate::settings::LibraryTableAlias::Ml);
         let sql = format!(
             r#"
             WITH last_read AS (
@@ -1792,7 +1792,7 @@ impl Database {
         source_collection: &impl SourceCollection,
         library_sorting_mode: &crate::settings::LibrarySortingMode,
     ) -> Result<Vec<Manga>> {
-        let order_by = library_sorting_mode.order_by_clause("pm");
+        let order_by = library_sorting_mode.order_by_clause(crate::settings::LibraryTableAlias::Pm);
         let sql = format!(
             r#"
             WITH last_read AS (
