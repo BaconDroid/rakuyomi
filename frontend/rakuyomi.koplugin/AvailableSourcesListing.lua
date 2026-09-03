@@ -316,6 +316,7 @@ function AvailableSourcesListing:patchTitleBar()
 
   local left_icon_size_ratio = self.title_bar.left_icon_size_ratio
   local left_icon_size = Screen:scaleBySize(DGENERIC_ICON_SIZE * left_icon_size_ratio)
+  local button_padding = Screen:scaleBySize(11)
 
   local buttons = {}
 
@@ -327,7 +328,8 @@ function AvailableSourcesListing:patchTitleBar()
         face = SMALL_FONT_FACE,
         bordersize = 0,
         enabled = true,
-        text_font_size = left_icon_size,
+        padding = button_padding,
+        padding_bottom = button_padding,
         text_font_bold = false,
         callback = function()
           self:showSelectLanguage()
@@ -347,7 +349,8 @@ function AvailableSourcesListing:patchTitleBar()
         face = SMALL_FONT_FACE,
         bordersize = 0,
         enabled = true,
-        text_font_size = left_icon_size,
+        padding = button_padding,
+        padding_bottom = button_padding,
         text_font_bold = false,
         callback = function()
           self:showSelectRepos()
@@ -359,20 +362,12 @@ function AvailableSourcesListing:patchTitleBar()
     }
   end
 
-  -- Insert the filter buttons on the left side of the title bar. When the
-  -- menu has no left icon, the close button lives at [2], so we must insert
-  -- instead of replacing it. The buttons must be grouped in a single widget:
-  -- the title bar is an OverlapGroup, where separate children would all be
-  -- painted at the same position and overlap each other. The group is only
-  -- inserted once; later calls replace it in place, otherwise the stale
-  -- copies would be painted on top of the fresh one.
+  -- Insert the filter buttons on the left side of the title bar. Always
+  -- insert at position [2] so the close button (if present) is shifted
+  -- to [3] instead of being replaced.
   local filter_group = HorizontalGroup:new(buttons)
   self.title_bar.left_button = filter_group
-  if self.title_bar[2] ~= nil then
-    self.title_bar[2] = filter_group
-  else
-    table.insert(self.title_bar, 2, filter_group)
-  end
+  table.insert(self.title_bar, 2, filter_group)
   self.filter_group = filter_group
 end
 

@@ -191,7 +191,7 @@ function ChapterListing:patchTitleBar(count_lang)
       width = left_icon_size,
       height = left_icon_size,
       padding = button_padding,
-      padding_bottom = left_icon_size,
+      padding_bottom = button_padding,
       callback = self.title_bar.left_icon_tap_callback,
       hold_callback = self.title_bar.left_icon_hold_callback,
       allow_flash = self.title_bar.left_icon_allow_flash,
@@ -203,7 +203,7 @@ function ChapterListing:patchTitleBar(count_lang)
       width = left_icon_size,
       height = left_icon_size,
       padding = button_padding,
-      padding_bottom = left_icon_size,
+      padding_bottom = button_padding,
       callback = function()
         self:openTrackingMenu()
       end,
@@ -219,7 +219,8 @@ function ChapterListing:patchTitleBar(count_lang)
           face = SMALL_FONT_FACE,
           bordersize = 0,
           enabled = true,
-          text_font_size = left_icon_size,
+          padding = button_padding,
+          padding_bottom = button_padding,
           text_font_bold = false,
           callback = function()
             self:showSelectLanguage()
