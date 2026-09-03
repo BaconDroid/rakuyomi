@@ -380,6 +380,7 @@ pub struct PlaylistManga {
 
 /// A reading status definition (e.g., Unread, Reading, Completed).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "sqlx", derive(sqlx::FromRow))]
 pub struct ReadingStatus {
     pub id: i64,
     pub name: String,
