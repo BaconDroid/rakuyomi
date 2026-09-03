@@ -4,6 +4,7 @@ local Screen = require("device").screen
 local InfoMessage = require("ui/widget/infomessage")
 local _ = require("gettext+")
 local addToPlaylist = require("handlers/addToPlaylist")
+local setReadingStatus = require("handlers/setReadingStatus")
 local NetworkMgr = require("ui/network/manager")
 
 local Backend = require("Backend")
@@ -442,6 +443,15 @@ function MangaSearchResults:onContextMenuChoice(item)
         callback = function()
           UIManager:close(dialog)
           addToPlaylist(manga)
+        end
+      }
+    },
+    {
+      {
+        text = _("Set reading status"),
+        callback = function()
+          UIManager:close(dialog)
+          setReadingStatus(manga)
         end
       }
     },
