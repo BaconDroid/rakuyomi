@@ -26,7 +26,7 @@ use shared::usecases::install_update::cleanup_update_backup;
 use crate::build_info::{get_build_info, DEFAULT_SETTINGS_JSON};
 use crate::listener::{pick_listener, ResolvedListener};
 use crate::state::State;
-use crate::{cookie, job, manga, playlists, settings, source, system, update};
+use crate::{cookie, job, manga, playlists, reading_status, settings, source, system, update};
 
 /// Initialize logging. Safe to call multiple times; only the first invocation
 /// installs the logger.
@@ -153,6 +153,7 @@ pub fn build_router(state: State) -> Router {
         .merge(cookie::routes())
         .merge(manga::routes())
         .merge(playlists::routes())
+        .merge(reading_status::routes())
         .merge(job::routes())
         .merge(settings::routes())
         .merge(source::routes())
