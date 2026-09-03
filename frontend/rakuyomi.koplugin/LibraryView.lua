@@ -17,6 +17,7 @@ local Button = require("ui/widget/button")
 local Font = require("ui/font")
 local InfoMessage = require("ui/widget/infomessage")
 local addToPlaylist = require("handlers/addToPlaylist")
+local setReadingStatus = require("handlers/setReadingStatus")
 local NetworkMgr = require("ui/network/manager")
 local logger = require("logger")
 
@@ -628,6 +629,15 @@ function LibraryView:onContextMenuChoice(item)
         callback = function()
           UIManager:close(dialog_context_menu)
           addToPlaylist(manga)
+        end,
+      },
+    },
+    {
+      {
+        text = _("Set reading status"),
+        callback = function()
+          UIManager:close(dialog_context_menu)
+          setReadingStatus(manga)
         end,
       },
     },
