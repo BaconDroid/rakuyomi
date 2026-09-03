@@ -191,7 +191,7 @@ function ChapterListing:patchTitleBar(count_lang)
       width = left_icon_size,
       height = left_icon_size,
       padding = button_padding,
-      padding_bottom = left_icon_size,
+      padding_bottom = button_padding,
       callback = self.title_bar.left_icon_tap_callback,
       hold_callback = self.title_bar.left_icon_hold_callback,
       allow_flash = self.title_bar.left_icon_allow_flash,
@@ -203,7 +203,7 @@ function ChapterListing:patchTitleBar(count_lang)
       width = left_icon_size,
       height = left_icon_size,
       padding = button_padding,
-      padding_bottom = left_icon_size,
+      padding_bottom = button_padding,
       callback = function()
         self:openTrackingMenu()
       end,
@@ -215,14 +215,13 @@ function ChapterListing:patchTitleBar(count_lang)
     table.insert(self.title_bar.left_button,
       VerticalGroup:new {
         Button:new {
-          text = Icons.LANG .. " " .. count_lang,
-          face = SMALL_FONT_FACE,
-          bordersize = 0,
-          enabled = true,
-          width = left_icon_size,
-          height = left_icon_size,
-          text_font_size = 16,
-          text_font_bold = false,
+           text = Icons.LANG .. " " .. count_lang,
+           face = SMALL_FONT_FACE,
+           bordersize = 0,
+           enabled = true,
+           padding = button_padding,
+           padding_bottom = button_padding,
+           text_font_bold = false,
           callback = function()
             self:showSelectLanguage()
           end
