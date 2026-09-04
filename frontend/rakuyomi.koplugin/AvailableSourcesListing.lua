@@ -338,50 +338,43 @@ function AvailableSourcesListing:patchTitleBar()
 
   local left_icon_size_ratio = self.title_bar.left_icon_size_ratio
   local left_icon_size = Screen:scaleBySize(DGENERIC_ICON_SIZE * left_icon_size_ratio)
+  local button_padding = Screen:scaleBySize(11)
 
   local buttons = {}
 
   if #self.langs > 0 then
     local count = #self.langs_selected
-    buttons[#buttons + 1] = VerticalGroup:new {
-      Button:new {
-        text = Icons.LANG .. (count > 0 and " " .. count or ""),
-        face = SMALL_FONT_FACE,
-        bordersize = 0,
-        enabled = true,
-        width = left_icon_size,
-        height = left_icon_size,
-        text_font_size = 16,
-        text_font_bold = false,
-        callback = function()
-          self:showSelectLanguage()
-        end,
-      },
-      VerticalSpan:new {
-        width = left_icon_size / 2,
-      },
+    buttons[#buttons + 1] = Button:new {
+      text = Icons.LANG .. (count > 0 and " " .. count or ""),
+      face = SMALL_FONT_FACE,
+      bordersize = 0,
+      enabled = true,
+      width = left_icon_size,
+      height = left_icon_size,
+      padding = button_padding,
+      padding_bottom = button_padding,
+      text_font_bold = false,
+      callback = function()
+        self:showSelectLanguage()
+      end,
     }
   end
 
   if #self.repos > 0 then
     local repo_count = #self.repos_selected
-    buttons[#buttons + 1] = VerticalGroup:new {
-      Button:new {
-        text = Icons.REPO .. (repo_count > 0 and " " .. repo_count or ""),
-        face = SMALL_FONT_FACE,
-        bordersize = 0,
-        enabled = true,
-        width = left_icon_size,
-        height = left_icon_size,
-        text_font_size = 16,
-        text_font_bold = false,
-        callback = function()
-          self:showSelectRepos()
-        end,
-      },
-      VerticalSpan:new {
-        width = left_icon_size / 2,
-      },
+    buttons[#buttons + 1] = Button:new {
+      text = Icons.REPO .. (repo_count > 0 and " " .. repo_count or ""),
+      face = SMALL_FONT_FACE,
+      bordersize = 0,
+      enabled = true,
+      width = left_icon_size,
+      height = left_icon_size,
+      padding = button_padding,
+      padding_bottom = button_padding,
+      text_font_bold = false,
+      callback = function()
+        self:showSelectRepos()
+      end,
     }
   end
 
