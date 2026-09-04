@@ -4,8 +4,6 @@ local Trapper = require("ui/trapper")
 local Icons = require("Icons")
 local Button = require("ui/widget/button")
 local HorizontalGroup = require("ui/widget/horizontalgroup")
-local VerticalGroup = require("ui/widget/verticalgroup")
-local VerticalSpan = require("ui/widget/verticalspan")
 
 local Backend = require("Backend")
 local ErrorDialog = require("ErrorDialog")
@@ -344,43 +342,33 @@ function AvailableSourcesListing:patchTitleBar()
 
   if #self.langs > 0 then
     local count = #self.langs_selected
-    buttons[#buttons + 1] = VerticalGroup:new {
-      Button:new {
-        text = Icons.LANG .. (count > 0 and " " .. count or ""),
-        face = SMALL_FONT_FACE,
-        bordersize = 0,
-        enabled = true,
-        padding = button_padding,
-        padding_bottom = button_padding,
-        text_font_bold = false,
-        callback = function()
-          self:showSelectLanguage()
-        end,
-      },
-      VerticalSpan:new {
-        width = left_icon_size / 2,
-      },
+    buttons[#buttons + 1] = Button:new {
+      text = Icons.LANG .. (count > 0 and " " .. count or ""),
+      face = SMALL_FONT_FACE,
+      bordersize = 0,
+      enabled = true,
+      padding = button_padding,
+      padding_bottom = button_padding,
+      text_font_bold = false,
+      callback = function()
+        self:showSelectLanguage()
+      end,
     }
   end
 
   if #self.repos > 0 then
     local repo_count = #self.repos_selected
-    buttons[#buttons + 1] = VerticalGroup:new {
-      Button:new {
-        text = Icons.REPO .. (repo_count > 0 and " " .. repo_count or ""),
-        face = SMALL_FONT_FACE,
-        bordersize = 0,
-        enabled = true,
-        padding = button_padding,
-        padding_bottom = button_padding,
-        text_font_bold = false,
-        callback = function()
-          self:showSelectRepos()
-        end,
-      },
-      VerticalSpan:new {
-        width = left_icon_size / 2,
-      },
+    buttons[#buttons + 1] = Button:new {
+      text = Icons.REPO .. (repo_count > 0 and " " .. repo_count or ""),
+      face = SMALL_FONT_FACE,
+      bordersize = 0,
+      enabled = true,
+      padding = button_padding,
+      padding_bottom = button_padding,
+      text_font_bold = false,
+      callback = function()
+        self:showSelectRepos()
+      end,
     }
   end
 
