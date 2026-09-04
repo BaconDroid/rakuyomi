@@ -144,10 +144,10 @@ impl LibrarySortingMode {
                 "ORDER BY unread_chapters_count DESC, mi.title COLLATE NOCASE DESC".into()
             }
             Self::LastReadAsc => {
-                "ORDER BY mcs.last_read_time ASC NULLS LAST, mi.title COLLATE NOCASE ASC".into()
+                "ORDER BY mcs.last_read_time ASC, mi.title COLLATE NOCASE ASC".into()
             }
             Self::LastReadDesc => {
-                "ORDER BY mcs.last_read_time DESC NULLS LAST, mi.title COLLATE NOCASE DESC".into()
+                "ORDER BY mcs.last_read_time DESC, mi.title COLLATE NOCASE DESC".into()
             }
             Self::SourceAsc => format!(
                 "ORDER BY {alias}.source_id COLLATE NOCASE ASC, mi.title COLLATE NOCASE ASC"
