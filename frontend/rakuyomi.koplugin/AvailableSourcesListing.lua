@@ -335,7 +335,6 @@ function AvailableSourcesListing:patchTitleBar()
   end
 
   local left_icon_size_ratio = self.title_bar.left_icon_size_ratio
-  local left_icon_size = Screen:scaleBySize(DGENERIC_ICON_SIZE * left_icon_size_ratio)
   local button_padding = Screen:scaleBySize(11)
 
   local buttons = {}
