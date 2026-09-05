@@ -114,6 +114,51 @@ pub enum LibrarySortingMode {
     SourceDesc,
 }
 
+/// Valid base table aliases for library manga queries.
+pub(crate) enum LibraryTableAlias {
+    /// manga_library table alias
+    Ml,
+    /// playlist_mangas table alias
+    Pm,
+}
+
+impl LibrarySortingMode {
+    /// Returns the ORDER BY clause for library manga queries.
+    /// `table_alias` is the base table alias (Ml for library, Pm for playlists).
+    pub(crate) fn order_by_clause(&self, table_alias: LibraryTableAlias) -> String {
+        let alias = match table_alias {
+            LibraryTableAlias::Ml => "ml",
+            LibraryTableAlias::Pm => "pm",
+        };
+        match self {
+            Self::Ascending => format!("ORDER BY {alias}.rowid, mi.title COLLATE NOCASE ASC"),
+            Self::Descending => {
+                format!("ORDER BY {alias}.rowid DESC, mi.title COLLATE NOCASE DESC")
+            }
+            Self::TitleAsc => format!("ORDER BY mi.title COLLATE NOCASE ASC, {alias}.rowid ASC"),
+            Self::TitleDesc => format!("ORDER BY mi.title COLLATE NOCASE DESC, {alias}.rowid DESC"),
+            Self::UnreadAsc => {
+                "ORDER BY unread_chapters_count ASC, mi.title COLLATE NOCASE ASC".into()
+            }
+            Self::UnreadDesc => {
+                "ORDER BY unread_chapters_count DESC, mi.title COLLATE NOCASE DESC".into()
+            }
+            Self::LastReadAsc => {
+                "ORDER BY mcs.last_read_time ASC, mi.title COLLATE NOCASE ASC".into()
+            }
+            Self::LastReadDesc => {
+                "ORDER BY mcs.last_read_time DESC, mi.title COLLATE NOCASE DESC".into()
+            }
+            Self::SourceAsc => format!(
+                "ORDER BY {alias}.source_id COLLATE NOCASE ASC, mi.title COLLATE NOCASE ASC"
+            ),
+            Self::SourceDesc => format!(
+                "ORDER BY {alias}.source_id COLLATE NOCASE DESC, mi.title COLLATE NOCASE DESC"
+            ),
+        }
+    }
+}
+
 #[derive(Copy, Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum LibraryViewMode {
