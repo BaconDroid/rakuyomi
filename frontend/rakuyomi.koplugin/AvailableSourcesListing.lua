@@ -4,8 +4,6 @@ local Trapper = require("ui/trapper")
 local Icons = require("Icons")
 local Button = require("ui/widget/button")
 local HorizontalGroup = require("ui/widget/horizontalgroup")
-local VerticalGroup = require("ui/widget/verticalgroup")
-local VerticalSpan = require("ui/widget/verticalspan")
 
 local Backend = require("Backend")
 local ErrorDialog = require("ErrorDialog")
@@ -19,7 +17,6 @@ local langNames = require("utils/languageNames")
 ---@diagnostic disable-next-line: different-requires
 local util = require("util")
 
-local DGENERIC_ICON_SIZE = G_defaults:readSetting("DGENERIC_ICON_SIZE")
 local Font = require("ui/font")
 local SMALL_FONT_FACE = Font:getFace("smallffont")
 
@@ -336,65 +333,51 @@ function AvailableSourcesListing:patchTitleBar()
     return
   end
 
-  local left_icon_size_ratio = self.title_bar.left_icon_size_ratio
-  local left_icon_size = Screen:scaleBySize(DGENERIC_ICON_SIZE * left_icon_size_ratio)
+  local button_padding = Screen:scaleBySize(11)
 
   local buttons = {}
 
   if #self.langs > 0 then
     local count = #self.langs_selected
-    buttons[#buttons + 1] = VerticalGroup:new {
-      Button:new {
-        text = Icons.LANG .. (count > 0 and " " .. count or ""),
-        face = SMALL_FONT_FACE,
-        bordersize = 0,
-        enabled = true,
-        width = left_icon_size,
-        height = left_icon_size,
-        text_font_size = 16,
-        text_font_bold = false,
-        callback = function()
-          self:showSelectLanguage()
-        end,
-      },
-      VerticalSpan:new {
-        width = left_icon_size / 2,
-      },
+    buttons[#buttons + 1] = Button:new {
+      text = Icons.LANG .. (count > 0 and " " .. count or ""),
+      face = SMALL_FONT_FACE,
+      bordersize = 0,
+      enabled = true,
+      padding = button_padding,
+      padding_bottom = button_padding,
+      text_font_bold = false,
+      callback = function()
+        self:showSelectLanguage()
+      end,
     }
   end
 
   if #self.repos > 0 then
     local repo_count = #self.repos_selected
-    buttons[#buttons + 1] = VerticalGroup:new {
-      Button:new {
-        text = Icons.REPO .. (repo_count > 0 and " " .. repo_count or ""),
-        face = SMALL_FONT_FACE,
-        bordersize = 0,
-        enabled = true,
-        width = left_icon_size,
-        height = left_icon_size,
-        text_font_size = 16,
-        text_font_bold = false,
-        callback = function()
-          self:showSelectRepos()
-        end,
-      },
-      VerticalSpan:new {
-        width = left_icon_size / 2,
-      },
+    buttons[#buttons + 1] = Button:new {
+      text = Icons.REPO .. (repo_count > 0 and " " .. repo_count or ""),
+      face = SMALL_FONT_FACE,
+      bordersize = 0,
+      enabled = true,
+      padding = button_padding,
+      padding_bottom = button_padding,
+      text_font_bold = false,
+      callback = function()
+        self:showSelectRepos()
+      end,
     }
   end
 
-  -- Insert the filter buttons on the left side of the title bar. When the
-  -- menu has no left icon, the close button lives at [2], so we must insert
-  -- instead of replacing it. The buttons must be grouped in a single widget:
-  -- the title bar is an OverlapGroup, where separate children would all be
-  -- painted at the same position and overlap each other. The group is only
-  -- inserted once; later calls replace it in place, otherwise the stale
-  -- copies would be painted on top of the fresh one.
+  -- Insert the filter buttons on the left side of the title bar. Always
+  -- insert at position [2] so the close button (if present) is shifted
+  -- to [3] instead of being replaced.
+  -- Use idempotent replacement: patchTitleBar may be called multiple times
+  -- (init, language selection, repo selection). table.insert would
+  -- accumulate stale copies on re-call.
   local filter_group = HorizontalGroup:new(buttons)
   self.title_bar.left_button = filter_group
-  if self.title_bar[2] ~= nil then
+  if self.title_bar[2] then
     self.title_bar[2] = filter_group
   else
     table.insert(self.title_bar, 2, filter_group)
