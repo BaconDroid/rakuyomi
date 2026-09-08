@@ -1,8 +1,16 @@
-# 1.0.0 (2026-09-05)
+## [1.41.7](https://github.com/tachibana-shin/rakuyomi/compare/v1.41.6...v1.41.7) (2026-09-08)
 
 
 ### Bug Fixes
 
+* apply cookies.json to wasm image requests ([#338](https://github.com/tachibana-shin/rakuyomi/issues/338)) ([#340](https://github.com/tachibana-shin/rakuyomi/issues/340)) ([2dbcbbc](https://github.com/tachibana-shin/rakuyomi/commit/2dbcbbc78d2f1d0ce9543ac872c23f83cd985c5a))
+* **ui:** reconnect to Wi-Fi before retrying source list fetch ([#334](https://github.com/tachibana-shin/rakuyomi/issues/334)) ([#341](https://github.com/tachibana-shin/rakuyomi/issues/341)) ([ccdeaac](https://github.com/tachibana-shin/rakuyomi/commit/ccdeaac140c7fbfb60ee89a17f99ac9e6a8a53bf))
+
+
+# 1.0.0 (2026-09-05)
+
+
+### Bug Fixes
 * `last_read` in details result 0 ([5fdc379](https://github.com/BaconDroid/rakuyomi/commit/5fdc3795b869c23b898ec07f352e7ae41a2ba321))
 * Add a minimum update interval to the manga update cron job. ([e866fec](https://github.com/BaconDroid/rakuyomi/commit/e866fec1a616ea262b3273548da8f9d140ad7893))
 * add context to error messages in source loading flow ([8aaf4a0](https://github.com/BaconDroid/rakuyomi/commit/8aaf4a0fd20425cc9746478243d8844282c884af))
