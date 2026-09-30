@@ -1923,11 +1923,23 @@ impl Database {
     /// Shares the CTE, the joins and the aggregate with the other listings:
     /// only the base table, the `IN` filter and the leading status grouping
     /// differ. Binds one parameter per status id, in order.
+    ///
+    /// Restricted to library members: a status can be set from search results
+    /// on a manga that was never added, and removing a manga from the library
+    /// leaves its status row behind. This listing feeds the library view, and
+    /// the mapping marks every row `in_library`, so both cases must be
+    /// filtered out here.
     fn status_listing_sql(status_ids: &[i64], sorting_mode: &LibrarySortingMode) -> String {
         let placeholders: Vec<String> = (0..status_ids.len())
             .map(|index| format!("?{}", index + 1))
             .collect();
-        let filter = format!("WHERE ml.status_id IN ({})", placeholders.join(", "));
+        let filter = format!(
+            "WHERE ml.status_id IN ({}) AND EXISTS (
+                SELECT 1 FROM manga_library lib
+                WHERE lib.source_id = ml.source_id AND lib.manga_id = ml.manga_id
+            )",
+            placeholders.join(", ")
+        );
         let order_by = format!(
             "ORDER BY ml.status_id ASC, {}",
             sorting_mode.order_by_list()
@@ -2574,6 +2586,26 @@ mod tests {
                 .unwrap();
         }
 
+        // Setting a status from search results, or removing a manga from the
+        // library afterwards, leaves a status row for a manga that is not in
+        // the library. It must not surface in the library listing.
+        let outsider = MangaId::from_strings("source".to_string(), "outsider".to_string());
+        database
+            .upsert_cached_manga_information(&[MangaInformation {
+                id: outsider,
+                title: Some("outsider".to_string()),
+                author: None,
+                artist: None,
+                cover_url: None,
+                viewer: MangaViewer::default(),
+            }])
+            .await
+            .unwrap();
+        database
+            .set_manga_status("source", "outsider", 2)
+            .await
+            .unwrap();
+
         for mode in SORTING_MODES {
             let sql = Database::status_listing_sql(&[2, 3], &mode);
             let rows = sqlx::query_as::<_, MangaLibraryRowWithReadCount>(sqlx::AssertSqlSafe(
@@ -2585,8 +2617,9 @@ mod tests {
             .await
             .unwrap_or_else(|error| panic!("status listing failed for {mode:?}: {error:#}"));
 
-            // `never` carries no status, so it must not leak in; the two
-            // statused mangas come back grouped by status id.
+            // `never` carries no status and `outsider` is not in the library,
+            // so neither must leak in; the two statused library mangas come
+            // back grouped by status id.
             let ids = rows
                 .iter()
                 .map(|row| row.manga_id.as_str())

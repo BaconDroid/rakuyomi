@@ -1,7 +1,11 @@
 use crate::model::{resolve_manga_covers, Manga};
-use axum::extract::{Path, Query, State as StateExtractor};
+use axum::extract::{Path, State as StateExtractor};
 use axum::routing::{delete, get, put};
 use axum::{Json, Router};
+// axum's own `Query` uses `serde_urlencoded`, which rejects repeated keys
+// (and a lone value) for a `Vec` field. `axum_extra`'s uses
+// `serde_html_form`, which collects `?status=1&status=2` as expected.
+use axum_extra::extract::Query;
 use serde::Deserialize;
 use shared::usecases;
 
@@ -101,4 +105,28 @@ async fn get_mangas_by_status(
     Ok(Json(
         mangas.into_iter().map(Manga::from).collect::<Vec<_>>(),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The client sends `?status=1&status=2`. axum's own extractor rejects
+    /// that for a `Vec` field, so this pins the repeated-key behaviour.
+    #[test]
+    fn status_query_reads_repeated_keys() {
+        let uri: axum::http::Uri = "/mangas/by-status?status=1&status=2".parse().unwrap();
+        let Query(query) = Query::<GetMangasByStatusQuery>::try_from_uri(&uri).unwrap();
+
+        assert_eq!(query.status, vec![1, 2]);
+    }
+
+    /// A single selected status is sent as one key, not a one-element list.
+    #[test]
+    fn status_query_reads_a_single_key() {
+        let uri: axum::http::Uri = "/mangas/by-status?status=3".parse().unwrap();
+        let Query(query) = Query::<GetMangasByStatusQuery>::try_from_uri(&uri).unwrap();
+
+        assert_eq!(query.status, vec![3]);
+    }
 }
