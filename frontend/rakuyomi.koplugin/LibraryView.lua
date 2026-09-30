@@ -219,13 +219,13 @@ function LibraryView:patchTitleBar(count_notify)
       show_parent = self.title_bar.show_parent,
     },
     IconButton:new {
-      icon = "column.two",
+      icon = "appbar.search",
       width = left_icon_size,
       height = left_icon_size,
       padding = button_padding,
       padding_bottom = button_padding,
       callback = function()
-        self:openPlaylistDialog()
+        self:openSearchMangasDialog()
       end,
       allow_flash = self.title_bar.left_icon_allow_flash,
       show_parent = self.title_bar.show_parent,
@@ -323,13 +323,13 @@ function LibraryView:patchTitleBar(count_notify)
       end
     },
     IconButton:new {
-      icon = "appbar.search",
+      icon = "column.two",
       width = right_icon_size,
       height = right_icon_size,
       padding = button_padding,
       padding_bottom = button_padding,
       callback = function()
-        self:openSearchMangasDialog()
+        self:openPlaylistDialog()
       end,
     },
   }
@@ -349,13 +349,14 @@ function LibraryView:patchTitleBar(count_notify)
   self.title_bar.right_button = HorizontalGroup:new(right_widgets)
 
   --- [1] title
-  --- [2] left button
-  --- [3] right button
-  if self.title_bar[2] ~= nil then
-    self.title_bar[2] = self.title_bar.left_button
-  end
+  --- [2] bottom line
+  --- [3] left button
+  --- [4] right button
   if self.title_bar[3] ~= nil then
-    self.title_bar[3] = self.title_bar.right_button
+    self.title_bar[3] = self.title_bar.left_button
+  end
+  if self.title_bar[4] ~= nil then
+    self.title_bar[4] = self.title_bar.right_button
   end
 end
 
