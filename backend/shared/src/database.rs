@@ -202,6 +202,16 @@ impl Database {
     /// rest of the query cannot drift apart. Only the base table and the
     /// playlist filter differ.
     fn manga_listing_sql(base: ListingBase, sorting_mode: &LibrarySortingMode) -> String {
+        Self::manga_listing_sql_for(base.table(), base.filter(), &sorting_mode.order_by_clause())
+    }
+
+    /// The shared listing body, parameterised by base table, `WHERE` clause
+    /// and full `ORDER BY` clause.
+    ///
+    /// Split from [`Self::manga_listing_sql`] so a listing with a dynamic
+    /// filter can supply its own `IN` placeholders -- and its own leading sort
+    /// key -- while still sharing the CTE, the joins and the aggregate.
+    fn manga_listing_sql_for(table: &str, filter: &str, order_by: &str) -> String {
         format!(
             r#"
             WITH manga_chapter_stats AS (
@@ -257,9 +267,6 @@ impl Database {
             GROUP BY ml.source_id, ml.manga_id, mcs.last_read_time
             {order_by}
             "#,
-            table = base.table(),
-            filter = base.filter(),
-            order_by = sorting_mode.order_by_clause(),
         )
     }
 
@@ -1911,6 +1918,23 @@ impl Database {
         Ok(())
     }
 
+    /// SQL for the status-filtered listing.
+    ///
+    /// Shares the CTE, the joins and the aggregate with the other listings:
+    /// only the base table, the `IN` filter and the leading status grouping
+    /// differ. Binds one parameter per status id, in order.
+    fn status_listing_sql(status_ids: &[i64], sorting_mode: &LibrarySortingMode) -> String {
+        let placeholders: Vec<String> = (0..status_ids.len())
+            .map(|index| format!("?{}", index + 1))
+            .collect();
+        let filter = format!("WHERE ml.status_id IN ({})", placeholders.join(", "));
+        let order_by = format!(
+            "ORDER BY ml.status_id ASC, {}",
+            sorting_mode.order_by_list()
+        );
+        Self::manga_listing_sql_for("manga_reading_status", &filter, &order_by)
+    }
+
     /// Returns mangas filtered by reading status IDs, sorted by status then library sort mode.
     pub async fn get_mangas_by_status(
         &self,
@@ -1922,102 +1946,7 @@ impl Database {
             return Ok(Vec::new());
         }
 
-        // Build the IN clause placeholders.
-        let placeholders: Vec<String> = (0..status_ids.len())
-            .map(|i| format!("?{}", i + 1))
-            .collect();
-        let in_clause = placeholders.join(", ");
-
-        let library_order = match library_sorting_mode {
-            crate::settings::LibrarySortingMode::Ascending => "mrs.rowid",
-            crate::settings::LibrarySortingMode::Descending => "mrs.rowid DESC",
-            crate::settings::LibrarySortingMode::TitleAsc => "mi.title COLLATE NOCASE ASC",
-            crate::settings::LibrarySortingMode::TitleDesc => "mi.title COLLATE NOCASE DESC",
-            crate::settings::LibrarySortingMode::UnreadAsc => "unread_chapters_count ASC",
-            crate::settings::LibrarySortingMode::UnreadDesc => "unread_chapters_count DESC",
-            crate::settings::LibrarySortingMode::LastReadAsc => "lti.last_read_time ASC NULLS LAST",
-            crate::settings::LibrarySortingMode::LastReadDesc => {
-                "lti.last_read_time DESC NULLS LAST"
-            }
-            crate::settings::LibrarySortingMode::SourceAsc => {
-                "mrs.source_id COLLATE NOCASE ASC, mi.title COLLATE NOCASE ASC"
-            }
-            crate::settings::LibrarySortingMode::SourceDesc => {
-                "mrs.source_id COLLATE NOCASE DESC, mi.title COLLATE NOCASE DESC"
-            }
-        };
-
-        let sql = format!(
-            r#"
-            WITH last_read AS (
-                SELECT
-                    ci.source_id,
-                    ci.manga_id,
-                    MAX(ci.chapter_number) AS last_read_chapter
-                FROM chapter_informations ci
-                JOIN chapter_state cs
-                    ON ci.source_id = cs.source_id
-                    AND ci.manga_id = cs.manga_id
-                    AND ci.chapter_id = cs.chapter_id
-                LEFT JOIN manga_state ms
-                    ON ms.source_id = ci.source_id AND ms.manga_id = ci.manga_id
-                WHERE (ms.preferred_scanlator IS NULL
-                OR ci.scanlator = ms.preferred_scanlator
-                OR ci.scanlator IS NULL)
-                AND cs.read = 1
-                GROUP BY ci.source_id, ci.manga_id
-            ),
-            last_time_interacted AS (
-                SELECT
-                    ci.source_id,
-                    ci.manga_id,
-                    COALESCE(MAX(cs.last_read), 0) AS last_read_time
-                FROM chapter_informations ci
-                JOIN chapter_state cs
-                    ON ci.source_id = cs.source_id
-                    AND ci.manga_id = cs.manga_id
-                    AND ci.chapter_id = cs.chapter_id
-                LEFT JOIN manga_state ms
-                    ON ms.source_id = ci.source_id AND ms.manga_id = ci.manga_id
-                WHERE (ms.preferred_scanlator IS NULL
-                OR ci.scanlator = ms.preferred_scanlator
-                OR ci.scanlator IS NULL)
-                AND cs.last_read IS NOT NULL
-                GROUP BY ci.source_id, ci.manga_id
-            )
-            SELECT
-                mrs.source_id,
-                mrs.manga_id,
-                mi.title,
-                mi.author,
-                mi.artist,
-                mi.cover_url,
-                COUNT(ci.chapter_number) AS unread_chapters_count,
-                lti.last_read_time AS last_read,
-                COALESCE(ms.viewer, md.viewer, 0) AS viewer,
-                CASE WHEN ms.viewer IS NOT NULL THEN 1 ELSE 0 END AS state_viewer,
-                mrs.status_id
-            FROM manga_reading_status mrs
-            JOIN manga_informations mi
-                ON mi.source_id = mrs.source_id AND mi.manga_id = mrs.manga_id
-            LEFT JOIN manga_state ms
-                ON ms.source_id = mrs.source_id AND ms.manga_id = mrs.manga_id
-            LEFT JOIN manga_details md
-                ON md.source_id = mrs.source_id AND md.id = mrs.manga_id
-            LEFT JOIN last_read lr
-                ON lr.source_id = mrs.source_id AND lr.manga_id = mrs.manga_id
-            LEFT JOIN last_time_interacted lti
-                ON lti.source_id = mrs.source_id AND lti.manga_id = mrs.manga_id
-            LEFT JOIN chapter_informations ci
-                ON ci.source_id = mrs.source_id
-                AND ci.manga_id = mrs.manga_id
-                AND (ms.preferred_scanlator IS NULL OR ci.scanlator = ms.preferred_scanlator OR ci.scanlator IS NULL)
-                AND ci.chapter_number > COALESCE(lr.last_read_chapter, -1)
-            WHERE mrs.status_id IN ({in_clause})
-            GROUP BY mrs.source_id, mrs.manga_id, lti.last_read_time, mrs.status_id
-            ORDER BY mrs.status_id ASC, {library_order}
-            "#
-        );
+        let sql = Self::status_listing_sql(status_ids, library_sorting_mode);
 
         let mut query =
             sqlx::query_as::<_, MangaLibraryRowWithReadCount>(sqlx::AssertSqlSafe(&*sql));
@@ -2627,6 +2556,42 @@ mod tests {
                 "{manga_id} should carry its own timestamp, got {:?}",
                 row.last_read
             );
+        }
+    }
+
+    /// The status-filtered listing reuses the shared query body, so it must
+    /// stay valid for every sorting mode and actually honour its filter.
+    #[tokio::test]
+    async fn status_listing_runs_for_every_sorting_mode() {
+        let (_directory, database, _playlist_id) = database_with_mixed_read_state().await;
+
+        // The migration seeds the five predefined statuses; use two so the
+        // leading `status_id` grouping is observable.
+        for (manga_id, status_id) in [("read", 3_i64), ("partial", 2_i64)] {
+            database
+                .set_manga_status("source", manga_id, status_id)
+                .await
+                .unwrap();
+        }
+
+        for mode in SORTING_MODES {
+            let sql = Database::status_listing_sql(&[2, 3], &mode);
+            let rows = sqlx::query_as::<_, MangaLibraryRowWithReadCount>(sqlx::AssertSqlSafe(
+                sql.as_str(),
+            ))
+            .bind(2_i64)
+            .bind(3_i64)
+            .fetch_all(&*database.pool.read().await)
+            .await
+            .unwrap_or_else(|error| panic!("status listing failed for {mode:?}: {error:#}"));
+
+            // `never` carries no status, so it must not leak in; the two
+            // statused mangas come back grouped by status id.
+            let ids = rows
+                .iter()
+                .map(|row| row.manga_id.as_str())
+                .collect::<Vec<_>>();
+            assert_eq!(ids, ["partial", "read"], "status listing for {mode:?}");
         }
     }
 
