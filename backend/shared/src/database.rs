@@ -1936,7 +1936,9 @@ impl Database {
             crate::settings::LibrarySortingMode::UnreadAsc => "unread_chapters_count ASC",
             crate::settings::LibrarySortingMode::UnreadDesc => "unread_chapters_count DESC",
             crate::settings::LibrarySortingMode::LastReadAsc => "lti.last_read_time ASC NULLS LAST",
-            crate::settings::LibrarySortingMode::LastReadDesc => "lti.last_read_time DESC NULLS LAST",
+            crate::settings::LibrarySortingMode::LastReadDesc => {
+                "lti.last_read_time DESC NULLS LAST"
+            }
             crate::settings::LibrarySortingMode::SourceAsc => {
                 "mrs.source_id COLLATE NOCASE ASC, mi.title COLLATE NOCASE ASC"
             }

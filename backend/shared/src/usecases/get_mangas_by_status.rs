@@ -1,9 +1,7 @@
 use anyhow::Result;
 
 use crate::{
-    database::Database,
-    model::Manga,
-    settings::LibrarySortingMode,
+    database::Database, model::Manga, settings::LibrarySortingMode,
     source_collection::SourceCollection,
 };
 
