@@ -1,4 +1,4 @@
-use crate::model::{resolve_manga_covers, Manga};
+use crate::model::{listing_response, Manga};
 use axum::extract::{Path, State as StateExtractor};
 use axum::routing::{delete, get, put};
 use axum::{Json, Router};
@@ -98,12 +98,10 @@ async fn get_mangas_by_status(
     )
     .await?;
 
-    if settings.library_view_mode != shared::settings::LibraryViewMode::Base {
-        resolve_manga_covers(&mut mangas, &chapter_storage);
-    }
-
-    Ok(Json(
-        mangas.into_iter().map(Manga::from).collect::<Vec<_>>(),
+    Ok(listing_response(
+        mangas,
+        settings.library_view_mode,
+        &chapter_storage,
     ))
 }
 

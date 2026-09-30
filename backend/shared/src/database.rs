@@ -270,18 +270,16 @@ impl Database {
         )
     }
 
-    pub async fn get_manga_library_with_read_count(
-        &self,
+    /// Maps listing rows to mangas, dropping rows whose source is gone.
+    ///
+    /// Shared by the library, playlist and status listings so their mapping
+    /// cannot drift apart; `in_library` is the only thing that differs.
+    fn mangas_from_rows(
+        rows: Vec<MangaLibraryRowWithReadCount>,
         source_collection: &impl SourceCollection,
-        library_sorting_mode: &LibrarySortingMode,
-    ) -> Result<Vec<Manga>> {
-        let sql = Self::manga_listing_sql(ListingBase::Library, library_sorting_mode);
-        let rows = sqlx::query_as::<_, MangaLibraryRowWithReadCount>(sqlx::AssertSqlSafe(&*sql))
-            .fetch_all(&*self.pool.read().await)
-            .await?;
-
-        let mangas = rows
-            .into_iter()
+        in_library: bool,
+    ) -> Vec<Manga> {
+        rows.into_iter()
             .filter_map(|row| {
                 let source = source_collection.get_by_id(&SourceId::new(row.source_id.clone()))?;
                 let info = MangaInformation {
@@ -299,13 +297,24 @@ impl Database {
                     state: MangaState::default(),
                     unread_chapters_count: row.unread_chapters_count.map(|v| v as usize),
                     last_read: row.last_read,
-                    in_library: true,
+                    in_library,
                     state_viewer: row.state_viewer != 0,
                 })
             })
-            .collect();
+            .collect()
+    }
 
-        Ok(mangas)
+    pub async fn get_manga_library_with_read_count(
+        &self,
+        source_collection: &impl SourceCollection,
+        library_sorting_mode: &LibrarySortingMode,
+    ) -> Result<Vec<Manga>> {
+        let sql = Self::manga_listing_sql(ListingBase::Library, library_sorting_mode);
+        let rows = sqlx::query_as::<_, MangaLibraryRowWithReadCount>(sqlx::AssertSqlSafe(&*sql))
+            .fetch_all(&*self.pool.read().await)
+            .await?;
+
+        Ok(Self::mangas_from_rows(rows, source_collection, true))
     }
 
     pub async fn get_manga_library_in_playlist_with_read_count(
@@ -320,32 +329,7 @@ impl Database {
             .fetch_all(&*self.pool.read().await)
             .await?;
 
-        let mangas = rows
-            .into_iter()
-            .filter_map(|row| {
-                let source = source_collection.get_by_id(&SourceId::new(row.source_id.clone()))?;
-                let info = MangaInformation {
-                    id: MangaId::from_strings(row.source_id, row.manga_id),
-                    title: row.title,
-                    author: row.author,
-                    artist: row.artist,
-                    cover_url: row.cover_url.and_then(|url| Url::parse(&url).ok()),
-                    viewer: MangaViewer::from(row.viewer.unwrap_or(0) as u8),
-                };
-
-                Some(Manga {
-                    source_information: SourceInformation::from(source.manifest()),
-                    information: info,
-                    state: MangaState::default(),
-                    unread_chapters_count: row.unread_chapters_count.map(|v| v as usize),
-                    last_read: row.last_read,
-                    in_library: false,
-                    state_viewer: row.state_viewer != 0,
-                })
-            })
-            .collect();
-
-        Ok(mangas)
+        Ok(Self::mangas_from_rows(rows, source_collection, false))
     }
 }
 
@@ -1967,32 +1951,7 @@ impl Database {
         }
         let rows = query.fetch_all(&*self.pool.read().await).await?;
 
-        let mangas = rows
-            .into_iter()
-            .filter_map(|row| {
-                let source = source_collection.get_by_id(&SourceId::new(row.source_id.clone()))?;
-                let info = MangaInformation {
-                    id: MangaId::from_strings(row.source_id, row.manga_id),
-                    title: row.title,
-                    author: row.author,
-                    artist: row.artist,
-                    cover_url: row.cover_url.and_then(|url| Url::parse(&url).ok()),
-                    viewer: MangaViewer::from(row.viewer.unwrap_or(0) as u8),
-                };
-
-                Some(Manga {
-                    source_information: SourceInformation::from(source.manifest()),
-                    information: info,
-                    state: MangaState::default(),
-                    unread_chapters_count: row.unread_chapters_count.map(|v| v as usize),
-                    last_read: row.last_read,
-                    in_library: true,
-                    state_viewer: row.state_viewer != 0,
-                })
-            })
-            .collect();
-
-        Ok(mangas)
+        Ok(Self::mangas_from_rows(rows, source_collection, true))
     }
 }
 

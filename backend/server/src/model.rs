@@ -23,6 +23,23 @@ pub fn resolve_manga_covers(mangas: &mut [DomainManga], chapter_storage: &Chapte
     }
 }
 
+/// Serializes a manga listing, resolving covers first when the active view
+/// mode shows them.
+///
+/// The library and playlist listings share this tail, so the cover decision
+/// and the wire shape stay in one place.
+pub fn listing_response(
+    mut mangas: Vec<DomainManga>,
+    view_mode: shared::settings::LibraryViewMode,
+    chapter_storage: &ChapterStorage,
+) -> axum::Json<Vec<Manga>> {
+    if view_mode != shared::settings::LibraryViewMode::Base {
+        resolve_manga_covers(&mut mangas, chapter_storage);
+    }
+
+    axum::Json(mangas.into_iter().map(Manga::from).collect())
+}
+
 /// Converts a local filesystem path into a `file://` URL, falling back to
 /// canonicalizing the path first if the direct conversion fails (e.g. for a
 /// relative path `Url::from_file_path` can't handle on its own).

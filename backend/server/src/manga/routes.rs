@@ -18,7 +18,7 @@ use shared::usecases;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
-use crate::model::{resolve_manga_covers, Chapter, Manga};
+use crate::model::{listing_response, resolve_manga_covers, Chapter, Manga};
 use crate::source_extractor::SourceExtractor;
 use crate::state::State;
 use crate::AppError;
@@ -150,12 +150,10 @@ async fn get_manga_library(
     let mut mangas =
         usecases::get_manga_library(&database, &*source_manager, library_sorting_mode).await?;
 
-    if settings.library_view_mode != shared::settings::LibraryViewMode::Base {
-        resolve_manga_covers(&mut mangas, &chapter_storage);
-    }
-
-    Ok(Json(
-        mangas.into_iter().map(Manga::from).collect::<Vec<_>>(),
+    Ok(listing_response(
+        mangas,
+        settings.library_view_mode,
+        &chapter_storage,
     ))
 }
 
