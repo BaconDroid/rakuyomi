@@ -84,7 +84,7 @@ async fn get_mangas_in_playlist(
     let chapter_storage = chapter_storage.lock().await;
     let library_sorting_mode = &settings.library_sorting_mode;
 
-    let mut mangas = usecases::get_mangas_in_playlist(
+    let mangas = usecases::get_mangas_in_playlist(
         &database,
         params.id,
         &*source_manager.lock().await,

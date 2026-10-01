@@ -147,7 +147,7 @@ async fn get_manga_library(
     let source_manager = source_manager.lock().await;
     let library_sorting_mode = &settings.library_sorting_mode;
 
-    let mut mangas =
+    let mangas =
         usecases::get_manga_library(&database, &*source_manager, library_sorting_mode).await?;
 
     Ok(listing_response(
