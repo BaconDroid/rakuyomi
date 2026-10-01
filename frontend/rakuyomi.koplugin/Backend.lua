@@ -1271,7 +1271,6 @@ end
 --- @field id number
 --- @field name string
 
---- Fetch all available reading statuses.
 --- @return SuccessfulResponse<ReadingStatus[]>|ErrorResponse
 function Backend.getReadingStatuses()
   return Backend.requestJson({
@@ -1279,7 +1278,6 @@ function Backend.getReadingStatuses()
   })
 end
 
---- Set a manga's reading status.
 --- @param source_id string
 --- @param manga_id string
 --- @param status_id number
@@ -1292,18 +1290,6 @@ function Backend.setMangaStatus(source_id, manga_id, status_id)
   })
 end
 
---- Remove a manga's reading status.
---- @param source_id string
---- @param manga_id string
---- @return SuccessfulResponse<nil>|ErrorResponse
-function Backend.removeMangaStatus(source_id, manga_id)
-  return Backend.requestJson({
-    path = "/mangas/" .. source_id .. "/" .. util.urlEncode(manga_id) .. "/status",
-    method = 'DELETE',
-  })
-end
-
---- Fetch mangas filtered by reading status IDs.
 --- @param status_ids number[]
 --- @return SuccessfulResponse<Manga[]>|ErrorResponse
 function Backend.getMangasByStatus(status_ids)

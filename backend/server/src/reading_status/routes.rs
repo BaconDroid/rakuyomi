@@ -1,6 +1,6 @@
 use crate::model::{listing_response, Manga};
 use axum::extract::{Path, State as StateExtractor};
-use axum::routing::{delete, get, put};
+use axum::routing::{get, put};
 use axum::{Json, Router};
 // axum's own `Query` uses `serde_urlencoded`, which rejects repeated keys
 // (and a lone value) for a `Vec` field. `axum_extra`'s uses
@@ -18,10 +18,6 @@ pub fn routes() -> Router<State> {
         .route(
             "/mangas/{source_id}/{manga_id}/status",
             put(set_manga_status),
-        )
-        .route(
-            "/mangas/{source_id}/{manga_id}/status",
-            delete(remove_manga_status),
         )
         .route("/mangas/by-status", get(get_mangas_by_status))
 }
@@ -61,15 +57,6 @@ async fn set_manga_status(
     Ok(Json(()))
 }
 
-async fn remove_manga_status(
-    StateExtractor(State { database, .. }): StateExtractor<State>,
-    Path(params): Path<MangaPath>,
-) -> Result<Json<()>, AppError> {
-    usecases::remove_manga_status(&database, &params.source_id, &params.manga_id).await?;
-
-    Ok(Json(()))
-}
-
 #[derive(Deserialize)]
 pub struct GetMangasByStatusQuery {
     pub status: Vec<i64>,
@@ -90,7 +77,7 @@ async fn get_mangas_by_status(
     let chapter_storage = chapter_storage.lock().await;
     let library_sorting_mode = &settings.library_sorting_mode;
 
-    let mut mangas = usecases::get_mangas_by_status(
+    let mangas = usecases::get_mangas_by_status(
         &database,
         &query.status,
         &*source_manager.lock().await,

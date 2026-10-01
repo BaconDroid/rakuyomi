@@ -1,6 +1,5 @@
 local CustomDialog = require("CustomDialog")
 local MenuItem = require("MenuItem")
-local ButtonWidget = require("ui/widget/button")
 local UnderlineContainer = require("ui/widget/container/underlinecontainer")
 local HorizontalGroup = require("ui/widget/horizontalgroup")
 local OverlapGroup = require("ui/widget/overlapgroup")
@@ -15,7 +14,6 @@ local Device = require("device")
 local UIManager = require("ui/uimanager")
 local Trapper = require("ui/trapper")
 local _ = require("gettext+")
-local Icons = require("Icons")
 
 local Backend = require("Backend")
 local ErrorDialog = require("ErrorDialog")
@@ -89,7 +87,6 @@ end
 ---@diagnostic disable-next-line: redundant-parameter
 local StatusPickerDialog = CustomDialog:extend {}
 
---- Shows the status picker dialog.
 --- @param manga Manga The manga to assign a reading status to.
 function StatusPickerDialog:fetchAndShow(manga)
   Trapper:wrap(function()
@@ -120,23 +117,7 @@ function StatusPickerDialog:_buildAndShow(statuses, manga)
     end)
   end
 
-  local function on_remove_status()
-    if current_dialog then UIManager:close(current_dialog) end
-    Trapper:wrap(function()
-      local r = Backend.removeMangaStatus(manga.source.id, manga.id)
-      if r.type == 'ERROR' then
-        ErrorDialog:show(r.message)
-        return
-      end
-      UIManager:show(InfoMessage:new {
-        text = _("Status removed")
-      })
-    end)
-  end
-
-  -- Build options list
   local options = {}
-  table.insert(options, { _type = "remove_status" })
 
   if #statuses == 0 then
     table.insert(options, { _type = "empty" })
@@ -153,20 +134,7 @@ function StatusPickerDialog:_buildAndShow(statuses, manga)
     title = _("Reading Status"),
     options = options,
     generate = function(option, max_width, _index)
-      if option._type == "remove_status" then
-        -- "Remove status" button at the top
-        local btn = ButtonWidget:new {
-          text = Icons.FA_TRASH .. "  " .. _("Remove status"),
-          face = Font:getFace("smallffont"),
-          radius = Size.radius.button,
-          bordersize = Size.border.button,
-          padding = Size.padding.button,
-          width = max_width - Size.padding.button * 2,
-          callback = on_remove_status,
-        }
-        btn.dimen = btn:getSize()
-        return btn
-      elseif option._type == "empty" then
+      if option._type == "empty" then
         local tw = TextWidget:new {
           text = _("No statuses available."),
           face = Font:getFace("smallffont"),
@@ -175,7 +143,6 @@ function StatusPickerDialog:_buildAndShow(statuses, manga)
         tw.dimen = tw:getSize()
         return tw
       else
-        -- Proper MenuItem-style row with tap to assign the status
         local s = option.status
         local item = StatusItem:new {
           status = s,

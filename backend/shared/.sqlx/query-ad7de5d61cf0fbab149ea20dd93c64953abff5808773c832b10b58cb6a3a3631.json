@@ -1,0 +1,28 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT\n                COUNT(*) AS \"started!: i64\",\n                COUNT(ci.chapter_number) AS \"read_known!: i64\"\n            FROM chapter_informations ci\n            INNER JOIN chapter_state cs\n                ON cs.source_id = ci.source_id\n                AND cs.manga_id = ci.manga_id\n                AND cs.chapter_id = ci.chapter_id\n            WHERE ci.source_id = ?1\n            AND ci.manga_id = ?2\n            AND cs.read = 1\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "started!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "read_known!: i64",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "ad7de5d61cf0fbab149ea20dd93c64953abff5808773c832b10b58cb6a3a3631"
+}

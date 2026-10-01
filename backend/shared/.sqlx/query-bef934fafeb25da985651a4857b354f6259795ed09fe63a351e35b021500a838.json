@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT status_id FROM manga_reading_status WHERE source_id = ?1 AND manga_id = ?2\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "status_id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "manga_reading_status",
+            "name": "status_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "bef934fafeb25da985651a4857b354f6259795ed09fe63a351e35b021500a838"
+}
