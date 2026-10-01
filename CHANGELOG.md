@@ -3,6 +3,8 @@
 
 ### Bug Fixes
 
+* **source:** reload an Aidoku source when its settings change ([#371](https://github.com/tachibana-shin/rakuyomi/issues/371)) ([856eb06](https://github.com/tachibana-shin/rakuyomi/commit/856eb06fbab89703dbe767846921b920d7a9bb57))
+* don't use `_` for space param ([e78e255](https://github.com/tachibana-shin/rakuyomi/commit/e78e255f03cfafadd7ac1037870c26ca0f452457))
 * `last_read` in details result 0 ([5fdc379](https://github.com/BaconDroid/rakuyomi/commit/5fdc3795b869c23b898ec07f352e7ae41a2ba321))
 * Add a minimum update interval to the manga update cron job. ([e866fec](https://github.com/BaconDroid/rakuyomi/commit/e866fec1a616ea262b3273548da8f9d140ad7893))
 * add context to error messages in source loading flow ([8aaf4a0](https://github.com/BaconDroid/rakuyomi/commit/8aaf4a0fd20425cc9746478243d8844282c884af))
