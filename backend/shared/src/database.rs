@@ -1932,25 +1932,61 @@ impl Database {
     /// Only genuinely read chapters (`read = 1`) count: merely opening one
     /// (which only sets `last_read`) deliberately does not advance the
     /// status, so a previewed manga stays Unread until a chapter is
-    /// actually marked read. Only chapters with a non-NULL
-    /// `chapter_number` count as known, so extras without a number never
-    /// mark a series finished.
+    /// actually marked read. Chapters are compared by number, not by row:
+    /// each scanlator contributes its own row per number, so both counts
+    /// use distinct numbers over the preferred-scanlator slice the library
+    /// listing shows. Only chapters with a non-NULL `chapter_number`
+    /// count as known, so extras without a number never mark a series
+    /// finished.
     ///
+    /// Automation only manages library members, and the status picker may
+    /// leave rows for manga outside it, so membership is read from
+    /// `manga_library`: non-members return before any write, while a
+    /// member without a row still counts as below any real status.
     /// Dropped is structurally unreachable: status ids ascend with
     /// progression (Unread 1 < Reading 2 < On Hold 3 < Completed 4 <
     /// Dropped 5), so no read activity ever targets it. Backward moves and
     /// dropping stay manual-only via the status picker. That seed order in
-    /// the `reading_statuses` migration must never be renumbered.
+    /// the `reading_statuses` migration must never be renumbered. The
+    /// final write repeats the forward check in its own `WHERE`, so a
+    /// manual choice committed between the pre-read and the write still
+    /// wins; the pre-read only spares a pointless write once the status
+    /// has converged.
     pub async fn sync_reading_status_with_progress(
         &self,
         source_id: &str,
         manga_id: &str,
     ) -> Result<()> {
+        let current = sqlx::query!(
+            r#"
+            SELECT mrs.status_id AS "status_id: i64"
+            FROM manga_library lib
+            LEFT JOIN manga_reading_status mrs
+                ON mrs.source_id = lib.source_id
+                AND mrs.manga_id = lib.manga_id
+            WHERE lib.source_id = ?1 AND lib.manga_id = ?2
+            "#,
+            source_id,
+            manga_id
+        )
+        .fetch_optional(&*self.pool.read().await)
+        .await?;
+        let Some(current) = current else {
+            return Ok(());
+        };
+        let current = current.status_id.unwrap_or(0);
+
         let known = sqlx::query!(
             r#"
-            SELECT COUNT(*) AS "known!: i64"
-            FROM chapter_informations
-            WHERE source_id = ?1 AND manga_id = ?2 AND chapter_number IS NOT NULL
+            SELECT COUNT(DISTINCT ci.chapter_number) AS "known!: i64"
+            FROM chapter_informations ci
+            LEFT JOIN manga_state ms
+                ON ms.source_id = ci.source_id AND ms.manga_id = ci.manga_id
+            WHERE ci.source_id = ?1 AND ci.manga_id = ?2
+            AND ci.chapter_number IS NOT NULL
+            AND (ms.preferred_scanlator IS NULL
+                OR ci.scanlator = ms.preferred_scanlator
+                OR ci.scanlator IS NULL)
             "#,
             source_id,
             manga_id
@@ -1963,15 +1999,20 @@ impl Database {
             r#"
             SELECT
                 COUNT(*) AS "started!: i64",
-                COUNT(ci.chapter_number) AS "read_known!: i64"
+                COUNT(DISTINCT ci.chapter_number) AS "read_known!: i64"
             FROM chapter_informations ci
             INNER JOIN chapter_state cs
                 ON cs.source_id = ci.source_id
                 AND cs.manga_id = ci.manga_id
                 AND cs.chapter_id = ci.chapter_id
+            LEFT JOIN manga_state ms
+                ON ms.source_id = ci.source_id AND ms.manga_id = ci.manga_id
             WHERE ci.source_id = ?1
             AND ci.manga_id = ?2
             AND cs.read = 1
+            AND (ms.preferred_scanlator IS NULL
+                OR ci.scanlator = ms.preferred_scanlator
+                OR ci.scanlator IS NULL)
             "#,
             source_id,
             manga_id
@@ -2000,25 +2041,29 @@ impl Database {
             }
         };
 
-        let current = sqlx::query!(
-            r#"
-            SELECT status_id FROM manga_reading_status WHERE source_id = ?1 AND manga_id = ?2
-            "#,
-            source_id,
-            manga_id
-        )
-        .fetch_optional(&*self.pool.read().await)
-        .await?;
-        let current = current.map(|row| row.status_id).unwrap_or(0);
         if target_id <= current {
             return Ok(());
         }
+        self.upsert_status_forward_only(source_id, manga_id, target_id)
+            .await
+    }
 
+    /// Stores `target_id`, moving the stored status forward only. The guard
+    /// lives in the write itself, so it stays atomic against a concurrent
+    /// manual choice: a `WHERE` that matches nothing updates nothing and
+    /// reports success.
+    async fn upsert_status_forward_only(
+        &self,
+        source_id: &str,
+        manga_id: &str,
+        target_id: i64,
+    ) -> Result<()> {
         sqlx::query!(
             r#"
             INSERT INTO manga_reading_status (source_id, manga_id, status_id)
             VALUES (?1, ?2, ?3)
             ON CONFLICT (source_id, manga_id) DO UPDATE SET status_id = excluded.status_id
+            WHERE excluded.status_id > manga_reading_status.status_id
             "#,
             source_id,
             manga_id,
@@ -2668,16 +2713,6 @@ mod tests {
     async fn status_listing_runs_for_every_sorting_mode() {
         let (_directory, database, _playlist_id) = database_with_mixed_read_state().await;
 
-        async fn status_of(database: &Database, manga_id: &str) -> Option<i64> {
-            sqlx::query_scalar::<_, i64>(
-                "SELECT status_id FROM manga_reading_status WHERE source_id = 'source' AND manga_id = ?",
-            )
-            .bind(manga_id)
-            .fetch_optional(&*database.pool.read().await)
-            .await
-            .unwrap()
-        }
-
         // Adding to the library defaults the status to Unread (id 1), and
         // the fixture's read activity already advanced it from there: every
         // chapter read with no `manga_details` row means On Hold (id 3), one
@@ -2833,6 +2868,71 @@ mod tests {
         id
     }
 
+    /// Builds a library manga from `(chapter_id, number, scanlator)` rows,
+    /// so several rows can share one chapter number the way aggregated
+    /// scanlators do, with an optional publishing status row and an
+    /// optional preferred scanlator.
+    async fn manga_with_scanlator_fixture(
+        database: &Database,
+        name: &str,
+        chapters: &[(&str, f32, &str)],
+        publishing_status: Option<i64>,
+        preferred_scanlator: Option<&str>,
+    ) -> MangaId {
+        let id = MangaId::from_strings("source".to_string(), name.to_string());
+        let informations = chapters
+            .iter()
+            .map(|(chapter_id, number, scanlator)| {
+                let mut chapter = chapter_information(&id, chapter_id, "en");
+                chapter.chapter_number = Some(*number);
+                chapter.scanlator = Some((*scanlator).to_string());
+                chapter
+            })
+            .collect::<Vec<_>>();
+        database
+            .upsert_cached_chapter_informations(&id, &informations)
+            .await
+            .unwrap();
+        database
+            .upsert_cached_manga_information(&[MangaInformation {
+                id: id.clone(),
+                title: Some(name.to_string()),
+                author: None,
+                artist: None,
+                cover_url: None,
+                viewer: MangaViewer::default(),
+            }])
+            .await
+            .unwrap();
+        database.add_manga_to_library(id.clone()).await.unwrap();
+        if let Some(status) = publishing_status {
+            sqlx::query!(
+                r#"
+                INSERT INTO manga_details (source_id, id, status, nsfw, viewer)
+                VALUES (?1, ?2, ?3, 0, 0)
+                "#,
+                "source",
+                name,
+                status
+            )
+            .execute(&*database.pool.read().await)
+            .await
+            .unwrap();
+        }
+        if let Some(scanlator) = preferred_scanlator {
+            database
+                .upsert_manga_state(
+                    &id,
+                    MangaState {
+                        preferred_scanlator: Some(scanlator.to_string()),
+                    },
+                )
+                .await
+                .unwrap();
+        }
+        id
+    }
+
     /// A manga with no read activity stays Unread: automation only moves a
     /// status on a read/unread event, never on its own.
     #[tokio::test]
@@ -2912,6 +3012,197 @@ mod tests {
                 &ChapterId::new(id.clone(), "chapter1".to_string()),
                 Some(true),
             )
+            .await
+            .unwrap();
+        assert_eq!(status_of(&database, "manga").await, Some(3));
+    }
+
+    /// Rows sharing a chapter number across scanlators count once: with no
+    /// preferred scanlator, reading one row of a duplicated number is a
+    /// partial read, and one read row per distinct number finishes the
+    /// manga even when a duplicate row was never opened.
+    #[tokio::test]
+    async fn duplicated_chapter_numbers_count_once() {
+        let directory = tempdir().unwrap();
+        let database = Database::new(&directory.path().join("database.sqlite"))
+            .await
+            .unwrap();
+        let id = manga_with_scanlator_fixture(
+            &database,
+            "manga",
+            &[
+                ("scan-a-1", 1.0, "a"),
+                ("scan-b-1", 1.0, "b"),
+                ("scan-a-2", 2.0, "a"),
+            ],
+            None,
+            None,
+        )
+        .await;
+
+        database
+            .mark_chapter_as_read(
+                &ChapterId::new(id.clone(), "scan-a-1".to_string()),
+                Some(true),
+            )
+            .await
+            .unwrap();
+        assert_eq!(status_of(&database, "manga").await, Some(2));
+
+        database
+            .mark_chapter_as_read(
+                &ChapterId::new(id.clone(), "scan-a-2".to_string()),
+                Some(true),
+            )
+            .await
+            .unwrap();
+        assert_eq!(status_of(&database, "manga").await, Some(3));
+    }
+
+    /// With a preferred scanlator set, only its rows count: reading another
+    /// scanlator's row leaves the manga Unread, and the terminal status
+    /// needs one read row per distinct number within the preferred rows.
+    #[tokio::test]
+    async fn preferred_scanlator_rows_decide_progress() {
+        let directory = tempdir().unwrap();
+        let database = Database::new(&directory.path().join("database.sqlite"))
+            .await
+            .unwrap();
+        let id = manga_with_scanlator_fixture(
+            &database,
+            "manga",
+            &[
+                ("scan-a-1", 1.0, "a"),
+                ("scan-b-1", 1.0, "b"),
+                ("scan-b-2", 2.0, "b"),
+            ],
+            None,
+            Some("b"),
+        )
+        .await;
+
+        database
+            .mark_chapter_as_read(
+                &ChapterId::new(id.clone(), "scan-a-1".to_string()),
+                Some(true),
+            )
+            .await
+            .unwrap();
+        assert_eq!(status_of(&database, "manga").await, Some(1));
+
+        database
+            .mark_chapter_as_read(
+                &ChapterId::new(id.clone(), "scan-b-1".to_string()),
+                Some(true),
+            )
+            .await
+            .unwrap();
+        assert_eq!(status_of(&database, "manga").await, Some(2));
+
+        database
+            .mark_chapter_as_read(
+                &ChapterId::new(id.clone(), "scan-b-2".to_string()),
+                Some(true),
+            )
+            .await
+            .unwrap();
+        assert_eq!(status_of(&database, "manga").await, Some(3));
+    }
+
+    /// Automation never touches manga outside the library: reading a
+    /// chapter there creates no status row, and adding the manga
+    /// afterwards still defaults it to Unread.
+    #[tokio::test]
+    async fn automation_ignores_manga_outside_library() {
+        let directory = tempdir().unwrap();
+        let database = Database::new(&directory.path().join("database.sqlite"))
+            .await
+            .unwrap();
+        let id = MangaId::from_strings("source".to_string(), "outsider".to_string());
+        let chapters = [Some(1.0), Some(2.0)]
+            .iter()
+            .enumerate()
+            .map(|(index, number)| {
+                let mut chapter = chapter_information(&id, &format!("chapter{index}"), "en");
+                chapter.chapter_number = *number;
+                chapter
+            })
+            .collect::<Vec<_>>();
+        database
+            .upsert_cached_chapter_informations(&id, &chapters)
+            .await
+            .unwrap();
+
+        database
+            .mark_chapter_as_read(
+                &ChapterId::new(id.clone(), "chapter0".to_string()),
+                Some(true),
+            )
+            .await
+            .unwrap();
+        database
+            .sync_reading_status_with_progress("source", "outsider")
+            .await
+            .unwrap();
+        assert_eq!(status_of(&database, "outsider").await, None);
+
+        database.add_manga_to_library(id.clone()).await.unwrap();
+        assert_eq!(status_of(&database, "outsider").await, Some(1));
+    }
+
+    /// A manual Completed is not lowered by later automation: with only
+    /// one of two chapters read the target stays below, so the stored
+    /// status is left alone.
+    #[tokio::test]
+    async fn manual_completed_status_survives_automation() {
+        let directory = tempdir().unwrap();
+        let database = Database::new(&directory.path().join("database.sqlite"))
+            .await
+            .unwrap();
+        let id =
+            manga_with_progress_fixture(&database, "manga", &[Some(1.0), Some(2.0)], Some(2)).await;
+        database
+            .set_manga_status("source", "manga", 4)
+            .await
+            .unwrap();
+
+        database
+            .mark_chapter_as_read(
+                &ChapterId::new(id.clone(), "chapter0".to_string()),
+                Some(true),
+            )
+            .await
+            .unwrap();
+        assert_eq!(status_of(&database, "manga").await, Some(4));
+    }
+
+    /// The guarded write is a no-op, not an error, when the stored status
+    /// is already ahead: writing a lower id over Dropped succeeds and
+    /// leaves Dropped in place, while a forward move still goes through.
+    #[tokio::test]
+    async fn guarded_upsert_ignores_lower_status_without_error() {
+        let directory = tempdir().unwrap();
+        let database = Database::new(&directory.path().join("database.sqlite"))
+            .await
+            .unwrap();
+        manga_with_progress_fixture(&database, "manga", &[Some(1.0), Some(2.0)], None).await;
+
+        database
+            .set_manga_status("source", "manga", 5)
+            .await
+            .unwrap();
+        database
+            .upsert_status_forward_only("source", "manga", 2)
+            .await
+            .unwrap();
+        assert_eq!(status_of(&database, "manga").await, Some(5));
+
+        database
+            .set_manga_status("source", "manga", 2)
+            .await
+            .unwrap();
+        database
+            .upsert_status_forward_only("source", "manga", 3)
             .await
             .unwrap();
         assert_eq!(status_of(&database, "manga").await, Some(3));
