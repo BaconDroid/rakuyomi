@@ -1326,17 +1326,19 @@ function LibraryView:openStatusFilterDialog()
       })
     end
 
-    -- CheckboxDialog mutates its `current` table in place, so it gets a copy:
-    -- the live filter must only change once the fetch actually succeeded,
-    -- otherwise a failure leaves the new filter active and persisted while the
-    -- previous manga list is still on screen.
+    -- CheckboxDialog mutates its `current` table in place and hands that same
+    -- reference to every callback, so the dialog gets a copy and each callback
+    -- value gets another one: the live filter may only change once the fetch
+    -- actually succeeded, otherwise a failure leaves the new filter active and
+    -- persisted while the previous manga list is still on screen.
     local dialog = CheckboxDialog:new {
       title = _("Filter by reading status"),
       current = util.tableDeepCopy(self.active_status_filter),
       options = options,
       update_callback = function(value)
+        local applied_status_filter = util.tableDeepCopy(value)
         local previous_status_filter = self.active_status_filter
-        self.active_status_filter = value
+        self.active_status_filter = applied_status_filter
 
         local mangas = self:fetchMangas()
         if not mangas then
@@ -1344,7 +1346,7 @@ function LibraryView:openStatusFilterDialog()
           return
         end
 
-        G_reader_settings:saveSetting("rakuyomi_status_filter", value)
+        G_reader_settings:saveSetting("rakuyomi_status_filter", applied_status_filter)
         self.mangas_raw = mangas
         self.favorite_search_keyword = nil
         self.mangas = mangas
