@@ -2103,7 +2103,6 @@ impl Database {
         Self::manga_listing_sql_for("manga_reading_status", &filter, &order_by)
     }
 
-    /// Sorted by status, then by the library sort mode.
     pub async fn get_mangas_by_status(
         &self,
         status_ids: &[i64],
@@ -2806,7 +2805,6 @@ mod tests {
         }
     }
 
-    /// Reads back the stored status id for assertions on automation.
     async fn status_of(database: &Database, manga_id: &str) -> Option<i64> {
         sqlx::query_scalar::<_, i64>(
             "SELECT status_id FROM manga_reading_status WHERE source_id = 'source' AND manga_id = ?",
@@ -2817,8 +2815,7 @@ mod tests {
         .unwrap()
     }
 
-    /// Builds a library manga with the given chapters (a `None` number keeps
-    /// the chapter unnumbered) and an optional publishing status row.
+    /// A `None` number still creates the chapter, just unnumbered.
     async fn manga_with_progress_fixture(
         database: &Database,
         name: &str,
@@ -2868,10 +2865,8 @@ mod tests {
         id
     }
 
-    /// Builds a library manga from `(chapter_id, number, scanlator)` rows,
-    /// so several rows can share one chapter number the way aggregated
-    /// scanlators do, with an optional publishing status row and an
-    /// optional preferred scanlator.
+    /// Several rows may share one chapter number, the way aggregated
+    /// scanlators do.
     async fn manga_with_scanlator_fixture(
         database: &Database,
         name: &str,
@@ -3334,7 +3329,6 @@ mod tests {
         }
         assert_eq!(status_of(&database, "manga").await, Some(4));
 
-        // A newly published chapter arrives and is read.
         let chapters = [Some(1.0), Some(2.0), Some(3.0)]
             .iter()
             .enumerate()
