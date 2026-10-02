@@ -17,6 +17,7 @@ local Button = require("ui/widget/button")
 local Font = require("ui/font")
 local InfoMessage = require("ui/widget/infomessage")
 local addToPlaylist = require("handlers/addToPlaylist")
+local setReadingStatus = require("handlers/setReadingStatus")
 local NetworkMgr = require("ui/network/manager")
 local logger = require("logger")
 
@@ -42,6 +43,7 @@ local LuaSettings = require("luasettings")
 local NotificationView = require("NotificationView")
 local CookieSyncView = require("CookieSyncView")
 local RadioButtonWidget = require("ui/widget/radiobuttonwidget")
+local util = require("util")
 
 local LoadingDialog = require("LoadingDialog")
 local MangaInfoWidget = require("MangaInfoWidget")
@@ -89,6 +91,8 @@ function LibraryView:init()
 
   self.mangas_raw = self.mangas
   self.favorite_search_keyword = nil
+  self.active_status_filter = G_reader_settings:readSetting("rakuyomi_status_filter", {})
+  self.count_notify = 0
   -- self.current_playlist = nil
 
   self:patchTitleBar(0)
@@ -158,7 +162,13 @@ function LibraryView:fetchMangas(cleanup)
   if self.current_playlist then
     response = Backend.getMangasInPlaylist(self.current_playlist.id)
   else
-    response = Backend.getMangasInLibrary()
+    local status_filter = self.active_status_filter
+      or G_reader_settings:readSetting("rakuyomi_status_filter", {})
+    if #status_filter > 0 then
+      response = Backend.getMangasByStatus(status_filter)
+    else
+      response = Backend.getMangasInLibrary()
+    end
   end
 
   if response.type == 'ERROR' then
@@ -188,6 +198,7 @@ function LibraryView:fetchCountNotification()
   end
 
   local count_notify = response.body
+  self.count_notify = count_notify
   self:patchTitleBar(count_notify)
 
   UIManager:setDirty(self.show_parent, "ui", self.dimen)
@@ -205,7 +216,36 @@ function LibraryView:patchTitleBar(count_notify)
   local right_icon_size = Screen:scaleBySize(DGENERIC_ICON_SIZE * right_icon_size_ratio)
   local button_padding = Screen:scaleBySize(11)
 
+  local status_filter_count = (self.active_status_filter and #self.active_status_filter) or 0
+
+  -- Height budget for the two text buttons below.
+  -- Button only honors padding_v (derived from `padding`): ui/widget/button has no
+  -- `padding_bottom` handling at all, so the frame height is just 2 * padding_v + height.
+  -- Two caps, both derived from values we already compute (no new magic numbers):
+  --   * left_icon_size: never grow taller than the IconButton siblings;
+  --   * the y of the title bar's bottom line minus our own vertical padding: the Button
+  --     frame is filled with opaque white (unlike IconButton, whose padding area is
+  --     transparent), so without this cap the frame still paints over the line even when
+  --     it matches the icon height.
+  -- The line y is the VerticalSpan that TitleBar puts right before the LineWidget in
+  -- title_bar[2] (see the [1]/[2]/[3]/[4] indexing at the end of this function).
+  -- Hardcoded-number exception: the `1` below is only a layout sanity floor so that a
+  -- degenerate geometry can never produce a non-positive height.
+  local text_button_height = left_icon_size
+  local filler_span
+  if self.title_bar.with_bottom_line and self.title_bar[2] then
+    filler_span = self.title_bar[2][1]
+  end
+  if filler_span and type(filler_span.width) == "number" then
+    text_button_height = math.max(1, math.min(left_icon_size, filler_span.width - 2 * button_padding))
+  end
+
+  -- HorizontalGroup defaults to align="center", which would push a shorter child down by
+  -- (tallest_child - own_height) / 2 and eat back into the margin we just carved out above.
+  -- "top" pins every child to y = 0; the IconButtons are the tallest members, so they were
+  -- already at y = 0 and do not move.
   self.title_bar.left_button = HorizontalGroup:new {
+    align = "top",
     IconButton:new {
       icon = "appbar.settings",
       icon_rotation_angle = self.left_icon_rotation_angle,
@@ -230,13 +270,30 @@ function LibraryView:patchTitleBar(count_notify)
       allow_flash = self.title_bar.left_icon_allow_flash,
       show_parent = self.title_bar.show_parent,
     },
+    -- NOTE: `face` is not a Button field (Button builds its label from text_font_face /
+    -- text_font_size), and `padding_bottom` is ignored as explained above. The explicit
+    -- `height` is what pins the frame to text_button_height; the label box is then
+    -- vertically centered inside the same band the icons occupy, so the glyphs stay
+    -- aligned with them while the frame stops above the bottom line.
+    Button:new {
+      text = status_filter_count > 0 and (Icons.FA_FILTER .. status_filter_count) or Icons.FA_FILTER,
+      face = SMALL_FONT_FACE,
+      bordersize = 0,
+      enabled = true,
+      height = text_button_height,
+      padding = button_padding,
+      text_font_bold = false,
+      callback = function()
+        self:openStatusFilterDialog()
+      end
+    },
     Button:new {
       text = Icons.FA_BELL .. count_notify,
       face = SMALL_FONT_FACE,
       bordersize = 0,
       enabled = true,
+      height = text_button_height,
       padding = button_padding,
-      padding_bottom = button_padding,
       text_font_bold = false,
       callback = function()
         Trapper:wrap(function()
@@ -628,6 +685,15 @@ function LibraryView:onContextMenuChoice(item)
         callback = function()
           UIManager:close(dialog_context_menu)
           addToPlaylist(manga)
+        end,
+      },
+    },
+    {
+      {
+        text = _("Set reading status"),
+        callback = function()
+          UIManager:close(dialog_context_menu)
+          setReadingStatus(manga)
         end,
       },
     },
@@ -1241,6 +1307,58 @@ function LibraryView:openSettingsSearchDialog()
   }
 
   UIManager:show(dialog)
+end
+
+--- @private
+function LibraryView:openStatusFilterDialog()
+  Trapper:wrap(function()
+    local response = Backend.getReadingStatuses()
+    if response.type == 'ERROR' then
+      ErrorDialog:show(response.message)
+      return
+    end
+
+    local options = {}
+    for _, status in ipairs(response.body) do
+      table.insert(options, {
+        id = status.id,
+        name = status.name,
+      })
+    end
+
+    -- CheckboxDialog mutates its `current` table in place and hands that same
+    -- reference to every callback, so the dialog gets a copy and each callback
+    -- value gets another one: the live filter may only change once the fetch
+    -- actually succeeded, otherwise a failure leaves the new filter active and
+    -- persisted while the previous manga list is still on screen.
+    local dialog = CheckboxDialog:new {
+      title = _("Filter by reading status"),
+      current = util.tableDeepCopy(self.active_status_filter),
+      options = options,
+      update_callback = function(value)
+        local applied_status_filter = util.tableDeepCopy(value)
+        local previous_status_filter = self.active_status_filter
+        self.active_status_filter = applied_status_filter
+
+        local mangas = self:fetchMangas()
+        if not mangas then
+          self.active_status_filter = previous_status_filter
+          return
+        end
+
+        G_reader_settings:saveSetting("rakuyomi_status_filter", applied_status_filter)
+        self.mangas_raw = mangas
+        self.favorite_search_keyword = nil
+        self.mangas = mangas
+
+        self:updateItems()
+        self:patchTitleBar(self.count_notify)
+        UIManager:setDirty(self.show_parent, "ui", self.dimen)
+      end,
+    }
+
+    UIManager:show(dialog)
+  end)
 end
 
 --- @private

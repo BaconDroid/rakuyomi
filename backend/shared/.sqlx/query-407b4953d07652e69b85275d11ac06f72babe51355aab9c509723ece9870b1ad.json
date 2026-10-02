@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT mrs.status_id AS \"status_id: i64\"\n            FROM manga_library lib\n            LEFT JOIN manga_reading_status mrs\n                ON mrs.source_id = lib.source_id\n                AND mrs.manga_id = lib.manga_id\n            WHERE lib.source_id = ?1 AND lib.manga_id = ?2\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "status_id: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "manga_reading_status",
+            "name": "status_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "407b4953d07652e69b85275d11ac06f72babe51355aab9c509723ece9870b1ad"
+}

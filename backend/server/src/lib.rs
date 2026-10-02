@@ -20,6 +20,7 @@ pub mod listener;
 pub mod manga;
 pub mod model;
 pub mod playlists;
+pub mod reading_status;
 pub mod settings;
 pub mod source;
 pub mod source_extractor;
