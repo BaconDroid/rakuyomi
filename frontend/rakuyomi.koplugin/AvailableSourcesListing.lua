@@ -13,10 +13,13 @@ local NetworkMgr = require("ui/network/manager")
 local _ = require("gettext+")
 local Testing = require("testing")
 local CheckboxDialog = require("CheckboxDialog")
+local titleBarTextButtonHeight = require("widgets/TitleBarButtonHeight")
 local format_languages = require("utils/formatLanguages")
 local langNames = require("utils/languageNames")
 ---@diagnostic disable-next-line: different-requires
 local util = require("util")
+
+local DGENERIC_ICON_SIZE = G_defaults:readSetting("DGENERIC_ICON_SIZE")
 
 local Font = require("ui/font")
 local SMALL_FONT_FACE = Font:getFace("smallffont")
@@ -334,7 +337,10 @@ function AvailableSourcesListing:patchTitleBar()
     return
   end
 
+  local left_icon_size_ratio = self.title_bar.left_icon_size_ratio
+  local left_icon_size = Screen:scaleBySize(DGENERIC_ICON_SIZE * left_icon_size_ratio)
   local button_padding = Screen:scaleBySize(11)
+  local text_button_height = titleBarTextButtonHeight(self.title_bar, left_icon_size, button_padding)
 
   local buttons = {}
 
@@ -345,8 +351,8 @@ function AvailableSourcesListing:patchTitleBar()
       face = SMALL_FONT_FACE,
       bordersize = 0,
       enabled = true,
+      height = text_button_height,
       padding = button_padding,
-      padding_bottom = button_padding,
       text_font_bold = false,
       callback = function()
         self:showSelectLanguage()
@@ -361,8 +367,8 @@ function AvailableSourcesListing:patchTitleBar()
       face = SMALL_FONT_FACE,
       bordersize = 0,
       enabled = true,
+      height = text_button_height,
       padding = button_padding,
-      padding_bottom = button_padding,
       text_font_bold = false,
       callback = function()
         self:showSelectRepos()
@@ -370,14 +376,25 @@ function AvailableSourcesListing:patchTitleBar()
     }
   end
 
-  -- With with_bottom_line, KOReader places the bottom-line group at [2]
-  -- and this menu's close button at [3]: the filter group and the close
-  -- button take the next two slots so the separator line is preserved.
-  -- Idempotent: patchTitleBar may run on init and on every filter change.
+-- HorizontalGroup centres by default, which pushes a shorter child down by
+  -- (tallest - own) / 2 and eats into the margin above the bottom line.
+  buttons.align = "top"
   local filter_group = HorizontalGroup:new(buttons)
+  --- [1] title
+  --- [2] bottom line (inserted by KOReader when with_bottom_line is set)
+  --- [3] filter group
+  --- [4] close button
+  -- This menu sets no title_bar_left_icon, so KOReader puts the inherited
+  -- close button at [3] and leaves [4] absent. Inserting the group before it
+  -- shifts the close button to [4] instead of overwriting it.
+  -- patchTitleBar reruns on init and on every filter change, so afterwards
+  -- replace the group already inserted rather than adding a second one.
+  if self.filter_group then
+    self.title_bar[3] = filter_group
+  else
+    table.insert(self.title_bar, 3, filter_group)
+  end
   self.title_bar.left_button = filter_group
-  self.title_bar[3] = filter_group
-  self.title_bar[4] = self.title_bar.right_button
   self.filter_group = filter_group
 end
 

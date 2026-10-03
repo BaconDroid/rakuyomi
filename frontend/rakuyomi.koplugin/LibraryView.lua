@@ -48,6 +48,7 @@ local util = require("util")
 local LoadingDialog = require("LoadingDialog")
 local MangaInfoWidget = require("MangaInfoWidget")
 local CheckboxDialog = require("CheckboxDialog")
+local titleBarTextButtonHeight = require("widgets/TitleBarButtonHeight")
 
 local RefreshLibraryChapters = require("jobs/RefreshLibraryChapters")
 local RefreshLibraryDetails = require("jobs/RefreshLibraryDetails")
@@ -218,28 +219,6 @@ function LibraryView:patchTitleBar(count_notify)
 
   local status_filter_count = (self.active_status_filter and #self.active_status_filter) or 0
 
-  -- Height budget for the two text buttons below.
-  -- Button only honors padding_v (derived from `padding`): ui/widget/button has no
-  -- `padding_bottom` handling at all, so the frame height is just 2 * padding_v + height.
-  -- Two caps, both derived from values we already compute (no new magic numbers):
-  --   * left_icon_size: never grow taller than the IconButton siblings;
-  --   * the y of the title bar's bottom line minus our own vertical padding: the Button
-  --     frame is filled with opaque white (unlike IconButton, whose padding area is
-  --     transparent), so without this cap the frame still paints over the line even when
-  --     it matches the icon height.
-  -- The line y is the VerticalSpan that TitleBar puts right before the LineWidget in
-  -- title_bar[2] (see the [1]/[2]/[3]/[4] indexing at the end of this function).
-  -- Hardcoded-number exception: the `1` below is only a layout sanity floor so that a
-  -- degenerate geometry can never produce a non-positive height.
-  local text_button_height = left_icon_size
-  local filler_span
-  if self.title_bar.with_bottom_line and self.title_bar[2] then
-    filler_span = self.title_bar[2][1]
-  end
-  if filler_span and type(filler_span.width) == "number" then
-    text_button_height = math.max(1, math.min(left_icon_size, filler_span.width - 2 * button_padding))
-  end
-
   -- HorizontalGroup defaults to align="center", which would push a shorter child down by
   -- (tallest_child - own_height) / 2 and eat back into the margin we just carved out above.
   -- "top" pins every child to y = 0; the IconButtons are the tallest members, so they were
@@ -271,16 +250,16 @@ function LibraryView:patchTitleBar(count_notify)
       show_parent = self.title_bar.show_parent,
     },
     -- NOTE: `face` is not a Button field (Button builds its label from text_font_face /
-    -- text_font_size), and `padding_bottom` is ignored as explained above. The explicit
-    -- `height` is what pins the frame to text_button_height; the label box is then
-    -- vertically centered inside the same band the icons occupy, so the glyphs stay
-    -- aligned with them while the frame stops above the bottom line.
+    -- text_font_size), and `padding_bottom` is ignored by Button. The explicit
+    -- `height` (via titleBarTextButtonHeight) is what pins the frame above the
+    -- bottom line; the label box is then vertically centered inside the same
+    -- band the icons occupy, so the glyphs stay aligned with them.
     Button:new {
       text = status_filter_count > 0 and (Icons.FA_FILTER .. status_filter_count) or Icons.FA_FILTER,
       face = SMALL_FONT_FACE,
       bordersize = 0,
       enabled = true,
-      height = text_button_height,
+      height = titleBarTextButtonHeight(self.title_bar, left_icon_size, button_padding),
       padding = button_padding,
       text_font_bold = false,
       callback = function()
@@ -292,7 +271,7 @@ function LibraryView:patchTitleBar(count_notify)
       face = SMALL_FONT_FACE,
       bordersize = 0,
       enabled = true,
-      height = text_button_height,
+      height = titleBarTextButtonHeight(self.title_bar, left_icon_size, button_padding),
       padding = button_padding,
       text_font_bold = false,
       callback = function()
