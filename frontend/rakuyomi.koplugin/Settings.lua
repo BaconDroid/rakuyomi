@@ -114,6 +114,8 @@ Settings.setting_value_definitions = {
         { label = _("Last read (newest)"),  value = 'last_read_desc' },
         { label = _("Source (A-Z)"),        value = 'source_asc' },
         { label = _("Source (Z-A)"),        value = 'source_desc' },
+        { label = _("Status (Unread first)"), value = 'reading_status_asc' },
+        { label = _("Status (Dropped first)"), value = 'reading_status_desc' },
       }
     }
   },

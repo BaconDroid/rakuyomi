@@ -242,7 +242,8 @@ impl Database {
                 COUNT(ci.chapter_number) AS unread_chapters_count,
                 mcs.last_read_time AS last_read,
                 COALESCE(ms.viewer, md.viewer, 0) AS viewer,
-                IIF(ms.viewer IS NOT NULL, 1, 0) AS state_viewer
+                IIF(ms.viewer IS NOT NULL, 1, 0) AS state_viewer,
+                mrs.status_id
             FROM {table} ml
             INNER JOIN manga_informations mi
                 ON mi.source_id = ml.source_id
@@ -253,6 +254,14 @@ impl Database {
             LEFT JOIN manga_details md
                 ON md.source_id = ml.source_id
                 AND md.id = ml.manga_id
+            -- `mrs` is what makes `order_by_list`'s reading-status arms valid on every
+            -- listing: `manga_library` and `playlist_mangas` have no `status_id` of their
+            -- own. On the status-filtered listing the base table already is
+            -- `manga_reading_status`, so this self-join is redundant but harmless, and it
+            -- buys a single ORDER BY string instead of one per listing.
+            LEFT JOIN manga_reading_status mrs
+                ON mrs.source_id = ml.source_id
+                AND mrs.manga_id = ml.manga_id
             LEFT JOIN manga_chapter_stats mcs
                 ON mcs.source_id = ml.source_id
                 AND mcs.manga_id = ml.manga_id
@@ -264,7 +273,10 @@ impl Database {
                     OR ci.scanlator IS NULL)
                 AND ci.chapter_number > COALESCE(mcs.last_read_chapter, -1)
             {filter}
-            GROUP BY ml.source_id, ml.manga_id, mcs.last_read_time
+            -- `mrs.status_id` is functionally dependent on the grouping keys (at most one
+            -- `manga_reading_status` row per manga), so listing it here does not change
+            -- the grouping. It is spelled out to keep the bare selected column portable.
+            GROUP BY ml.source_id, ml.manga_id, mcs.last_read_time, mrs.status_id
             {order_by}
             "#,
         )
@@ -2096,10 +2108,14 @@ impl Database {
             )",
             placeholders.join(", ")
         );
-        let order_by = format!(
-            "ORDER BY ml.status_id ASC, {}",
-            sorting_mode.order_by_list()
-        );
+        let order_by = if sorting_mode.sorts_by_reading_status() {
+            sorting_mode.order_by_clause()
+        } else {
+            format!(
+                "ORDER BY ml.status_id ASC, {}",
+                sorting_mode.order_by_list()
+            )
+        };
         Self::manga_listing_sql_for("manga_reading_status", &filter, &order_by)
     }
 
@@ -2159,7 +2175,7 @@ pub struct MangaLibraryRowWithReadCount {
     pub viewer: Option<i64>,
     pub state_viewer: i64,
 
-    /// Reading status ID (only selected by reading-status queries, None elsewhere)
+    /// Reading status ID, NULL when the manga has no `manga_reading_status` row
     #[sqlx(default)]
     pub status_id: Option<i64>,
 }
@@ -2463,7 +2479,7 @@ mod tests {
     }
 
     /// Every sorting mode, so the loop below cannot silently cover fewer.
-    const SORTING_MODES: [LibrarySortingMode; 10] = [
+    const SORTING_MODES: [LibrarySortingMode; 12] = [
         LibrarySortingMode::Ascending,
         LibrarySortingMode::Descending,
         LibrarySortingMode::TitleAsc,
@@ -2474,6 +2490,8 @@ mod tests {
         LibrarySortingMode::LastReadDesc,
         LibrarySortingMode::SourceAsc,
         LibrarySortingMode::SourceDesc,
+        LibrarySortingMode::ReadingStatusAsc,
+        LibrarySortingMode::ReadingStatusDesc,
     ];
 
     /// A database with three library entries: `read` fully read, `never` never
@@ -2796,12 +2814,180 @@ mod tests {
 
             // `never` is Unread and `outsider` is not in the library, so
             // neither matches the filter; the two reassigned library mangas
-            // come back grouped by status id.
+            // come back grouped by status id. An explicit reading-status
+            // order stands on its own instead, so `ReadingStatusDesc`
+            // genuinely reverses the pair.
             let ids = rows
                 .iter()
                 .map(|row| row.manga_id.as_str())
                 .collect::<Vec<_>>();
-            assert_eq!(ids, ["partial", "read"], "status listing for {mode:?}");
+            let expected = if mode == LibrarySortingMode::ReadingStatusDesc {
+                vec!["read", "partial"]
+            } else {
+                vec!["partial", "read"]
+            };
+            assert_eq!(ids, expected, "status listing for {mode:?}");
+        }
+    }
+
+    /// The plain library listing ordered by reading status returns rows in
+    /// ascending `status_id` order for `ReadingStatusAsc` and the exact
+    /// reverse for `ReadingStatusDesc`, with `mi.title` breaking ties
+    /// inside equal statuses.
+    /// The library listing orders by reading status, and the title tiebreaker applies
+    /// within equal statuses.
+    ///
+    /// The statuses are set up so that title order contradicts status order, which is
+    /// what lets these assertions prove the status key is the one driving the result: a
+    /// title-ordered implementation would return each `TitleAsc`/`TitleDesc` vector
+    /// below and fail the reading-status ones.
+    #[tokio::test]
+    async fn library_listing_orders_by_reading_status() {
+        let (_directory, database, _playlist_id) = database_with_mixed_read_state().await;
+
+        // The fixture's read activity already advanced the statuses: `read`
+        // is On Hold (3), `partial` is Reading (2), `never` stays Unread
+        // (1). Force a tie on Reading so the title tiebreaker is
+        // observable: "partial" sorts before "read" alphabetically.
+        database
+            .set_manga_status("source", "read", 2)
+            .await
+            .unwrap();
+        assert_eq!(status_of(&database, "read").await, Some(2));
+
+        // Fixture titles equal the manga ids, so alphabetically the three are
+        // `never` < `partial` < `read`. Dropping `never` to the terminal status inverts
+        // it against that order, so the status key and the title key now disagree.
+        database
+            .set_manga_status("source", "never", 5)
+            .await
+            .unwrap();
+        assert_eq!(status_of(&database, "never").await, Some(5));
+
+        for (mode, expected) in [
+            (
+                LibrarySortingMode::TitleAsc,
+                vec!["never", "partial", "read"],
+            ),
+            (
+                LibrarySortingMode::TitleDesc,
+                vec!["read", "partial", "never"],
+            ),
+            (
+                LibrarySortingMode::ReadingStatusAsc,
+                vec!["partial", "read", "never"],
+            ),
+            (
+                LibrarySortingMode::ReadingStatusDesc,
+                vec!["never", "read", "partial"],
+            ),
+        ] {
+            let sql = Database::manga_listing_sql(ListingBase::Library, &mode);
+            let rows = sqlx::query_as::<_, MangaLibraryRowWithReadCount>(sqlx::AssertSqlSafe(
+                sql.as_str(),
+            ))
+            .fetch_all(&*database.pool.read().await)
+            .await
+            .unwrap();
+            let ids = rows
+                .iter()
+                .map(|row| row.manga_id.as_str())
+                .collect::<Vec<_>>();
+            assert_eq!(ids, expected, "library listing for {mode:?}");
+        }
+    }
+
+    /// An explicit reading-status order wins over the status-filtered
+    /// listing's default `status_id` grouping: `ReadingStatusDesc`
+    /// genuinely reverses the row order instead of being shadowed by a
+    /// prepended ascending key that would always win.
+    #[tokio::test]
+    async fn status_filtered_listing_respects_explicit_reading_status_order() {
+        let (_directory, database, _playlist_id) = database_with_mixed_read_state().await;
+
+        for (manga_id, status_id) in [("read", 3_i64), ("partial", 2_i64)] {
+            database
+                .set_manga_status("source", manga_id, status_id)
+                .await
+                .unwrap();
+        }
+
+        // Only the descending arm can discriminate here, and it is the regression guard.
+        // In this listing every non-status mode is still grouped by `ml.status_id ASC`
+        // before its own key applies, and `ml.status_id` is `mrs.status_id` row-wise, so
+        // `ReadingStatusAsc` is by construction indistinguishable from that default
+        // grouping. Crossing the status assignment against the titles would not help: the
+        // grouping key, not the title, decides these rows either way.
+        for (mode, expected) in [
+            (LibrarySortingMode::TitleAsc, vec!["partial", "read"]),
+            (
+                LibrarySortingMode::ReadingStatusAsc,
+                vec!["partial", "read"],
+            ),
+            (
+                LibrarySortingMode::ReadingStatusDesc,
+                vec!["read", "partial"],
+            ),
+        ] {
+            let sql = Database::status_listing_sql(&[2, 3], &mode);
+            let rows = sqlx::query_as::<_, MangaLibraryRowWithReadCount>(sqlx::AssertSqlSafe(
+                sql.as_str(),
+            ))
+            .bind(2_i64)
+            .bind(3_i64)
+            .fetch_all(&*database.pool.read().await)
+            .await
+            .unwrap();
+            let ids = rows
+                .iter()
+                .map(|row| row.manga_id.as_str())
+                .collect::<Vec<_>>();
+            assert_eq!(ids, expected, "status listing for {mode:?}");
+        }
+    }
+
+    /// A library manga with no `manga_reading_status` row (a LEFT JOIN miss)
+    /// still appears in the reading-status ordering, sorted as NULL status:
+    /// first ascending, last descending.
+    #[tokio::test]
+    async fn library_listing_sorts_manga_without_status_row_as_null() {
+        let (_directory, database, _playlist_id) = database_with_mixed_read_state().await;
+
+        // `add_manga_to_library` always seeds a status row, so remove
+        // `never`'s row directly. The unchecked `query` form adds no offline
+        // `.sqlx` cache entry.
+        sqlx::query(
+            "DELETE FROM manga_reading_status WHERE source_id = 'source' AND manga_id = 'never'",
+        )
+        .execute(&*database.pool.read().await)
+        .await
+        .unwrap();
+        assert_eq!(status_of(&database, "never").await, None);
+
+        // Remaining statuses: `read` is On Hold (3), `partial` is Reading
+        // (2), `never` has no status row at all.
+        for (mode, expected) in [
+            (
+                LibrarySortingMode::ReadingStatusAsc,
+                vec!["never", "partial", "read"],
+            ),
+            (
+                LibrarySortingMode::ReadingStatusDesc,
+                vec!["read", "partial", "never"],
+            ),
+        ] {
+            let sql = Database::manga_listing_sql(ListingBase::Library, &mode);
+            let rows = sqlx::query_as::<_, MangaLibraryRowWithReadCount>(sqlx::AssertSqlSafe(
+                sql.as_str(),
+            ))
+            .fetch_all(&*database.pool.read().await)
+            .await
+            .unwrap();
+            let ids = rows
+                .iter()
+                .map(|row| row.manga_id.as_str())
+                .collect::<Vec<_>>();
+            assert_eq!(ids, expected, "library listing for {mode:?}");
         }
     }
 
