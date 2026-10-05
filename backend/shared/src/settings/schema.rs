@@ -112,27 +112,57 @@ pub enum LibrarySortingMode {
     LastReadDesc,
     SourceAsc,
     SourceDesc,
+    ReadingStatusAsc,
+    ReadingStatusDesc,
 }
 
 impl LibrarySortingMode {
+    /// The shared ORDER BY column list, without the `ORDER BY` keyword.
+    ///
+    /// Every manga listing aliases its base table to `ml`, so one list serves
+    /// them all. The status-filtered listing prepends its own grouping key
+    /// rather than keeping a second copy of this match. The reading-status
+    /// modes order by `mrs.status_id`, which the shared listing body joins
+    /// under the `mrs` alias, with `mi.title` breaking ties exactly like the
+    /// other modes.
+    pub(crate) fn order_by_list(&self) -> &'static str {
+        match self {
+            Self::Ascending => "ml.rowid ASC, mi.title ASC",
+            Self::Descending => "ml.rowid DESC, mi.title DESC",
+            Self::TitleAsc => "mi.title ASC, ml.rowid ASC",
+            Self::TitleDesc => "mi.title DESC, ml.rowid DESC",
+            Self::UnreadAsc => "unread_chapters_count ASC, mi.title ASC",
+            Self::UnreadDesc => "unread_chapters_count DESC, mi.title DESC",
+            Self::LastReadAsc => "mcs.last_read_time ASC, mi.title ASC",
+            Self::LastReadDesc => "mcs.last_read_time DESC, mi.title DESC",
+            Self::SourceAsc => "ml.source_id ASC, mi.title ASC",
+            Self::SourceDesc => "ml.source_id DESC, mi.title DESC",
+            Self::ReadingStatusAsc => "mrs.status_id ASC, mi.title ASC",
+            Self::ReadingStatusDesc => "mrs.status_id DESC, mi.title DESC",
+        }
+    }
+
     /// Returns the ORDER BY clause for the library and playlist manga queries.
     ///
     /// Both queries alias their base table (`manga_library` and
     /// `playlist_mangas` respectively) to the same `ml` alias, so a single
     /// clause serves both and the queries stay mirror images of each other.
-    pub fn order_by_clause(&self) -> &'static str {
-        match self {
-            Self::Ascending => "ORDER BY ml.rowid ASC, mi.title ASC",
-            Self::Descending => "ORDER BY ml.rowid DESC, mi.title DESC",
-            Self::TitleAsc => "ORDER BY mi.title ASC, ml.rowid ASC",
-            Self::TitleDesc => "ORDER BY mi.title DESC, ml.rowid DESC",
-            Self::UnreadAsc => "ORDER BY unread_chapters_count ASC, mi.title ASC",
-            Self::UnreadDesc => "ORDER BY unread_chapters_count DESC, mi.title DESC",
-            Self::LastReadAsc => "ORDER BY mcs.last_read_time ASC, mi.title ASC",
-            Self::LastReadDesc => "ORDER BY mcs.last_read_time DESC, mi.title DESC",
-            Self::SourceAsc => "ORDER BY ml.source_id ASC, mi.title ASC",
-            Self::SourceDesc => "ORDER BY ml.source_id DESC, mi.title DESC",
-        }
+    pub fn order_by_clause(&self) -> String {
+        format!("ORDER BY {}", self.order_by_list())
+    }
+
+    /// Whether this mode already orders by reading status.
+    ///
+    /// The status-filtered listing normally groups by `status_id` so the filter
+    /// reads as consecutive blocks. When the user explicitly asks for a status
+    /// order, let the chosen mode stand instead of prepending a second,
+    /// conflicting `status_id` key that would always win.
+    ///
+    /// `pub`, like [`Self::order_by_clause`]: `build.rs` includes this file standalone
+    /// to derive the settings JSON schema, and in that build-script unit nothing calls
+    /// this, so `pub(crate)` would draw a `dead_code` warning there.
+    pub fn sorts_by_reading_status(&self) -> bool {
+        matches!(self, Self::ReadingStatusAsc | Self::ReadingStatusDesc)
     }
 }
 

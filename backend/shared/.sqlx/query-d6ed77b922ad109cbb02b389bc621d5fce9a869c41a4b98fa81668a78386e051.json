@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            INSERT INTO manga_reading_status (source_id, manga_id, status_id)\n            VALUES (?1, ?2, ?3)\n            ON CONFLICT (source_id, manga_id) DO UPDATE SET status_id = excluded.status_id\n            WHERE excluded.status_id > manga_reading_status.status_id\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "d6ed77b922ad109cbb02b389bc621d5fce9a869c41a4b98fa81668a78386e051"
+}
