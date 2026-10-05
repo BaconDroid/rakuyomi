@@ -2821,6 +2821,9 @@ mod tests {
                 .iter()
                 .map(|row| row.manga_id.as_str())
                 .collect::<Vec<_>>();
+            // This listing prepends `ml.status_id ASC` for every non-status mode, and
+            // `ml.status_id` is `mrs.status_id` row-wise, so `ReadingStatusAsc` cannot be
+            // told apart from that default grouping here. Only the descending arm can.
             let expected = if mode == LibrarySortingMode::ReadingStatusDesc {
                 vec!["read", "partial"]
             } else {
@@ -2834,8 +2837,6 @@ mod tests {
     /// ascending `status_id` order for `ReadingStatusAsc` and the exact
     /// reverse for `ReadingStatusDesc`, with `mi.title` breaking ties
     /// inside equal statuses.
-    /// The library listing orders by reading status, and the title tiebreaker applies
-    /// within equal statuses.
     ///
     /// The statuses are set up so that title order contradicts status order, which is
     /// what lets these assertions prove the status key is the one driving the result: a
@@ -2894,55 +2895,6 @@ mod tests {
                 .map(|row| row.manga_id.as_str())
                 .collect::<Vec<_>>();
             assert_eq!(ids, expected, "library listing for {mode:?}");
-        }
-    }
-
-    /// An explicit reading-status order wins over the status-filtered
-    /// listing's default `status_id` grouping: `ReadingStatusDesc`
-    /// genuinely reverses the row order instead of being shadowed by a
-    /// prepended ascending key that would always win.
-    #[tokio::test]
-    async fn status_filtered_listing_respects_explicit_reading_status_order() {
-        let (_directory, database, _playlist_id) = database_with_mixed_read_state().await;
-
-        for (manga_id, status_id) in [("read", 3_i64), ("partial", 2_i64)] {
-            database
-                .set_manga_status("source", manga_id, status_id)
-                .await
-                .unwrap();
-        }
-
-        // Only the descending arm can discriminate here, and it is the regression guard.
-        // In this listing every non-status mode is still grouped by `ml.status_id ASC`
-        // before its own key applies, and `ml.status_id` is `mrs.status_id` row-wise, so
-        // `ReadingStatusAsc` is by construction indistinguishable from that default
-        // grouping. Crossing the status assignment against the titles would not help: the
-        // grouping key, not the title, decides these rows either way.
-        for (mode, expected) in [
-            (LibrarySortingMode::TitleAsc, vec!["partial", "read"]),
-            (
-                LibrarySortingMode::ReadingStatusAsc,
-                vec!["partial", "read"],
-            ),
-            (
-                LibrarySortingMode::ReadingStatusDesc,
-                vec!["read", "partial"],
-            ),
-        ] {
-            let sql = Database::status_listing_sql(&[2, 3], &mode);
-            let rows = sqlx::query_as::<_, MangaLibraryRowWithReadCount>(sqlx::AssertSqlSafe(
-                sql.as_str(),
-            ))
-            .bind(2_i64)
-            .bind(3_i64)
-            .fetch_all(&*database.pool.read().await)
-            .await
-            .unwrap();
-            let ids = rows
-                .iter()
-                .map(|row| row.manga_id.as_str())
-                .collect::<Vec<_>>();
-            assert_eq!(ids, expected, "status listing for {mode:?}");
         }
     }
 
@@ -3127,42 +3079,11 @@ mod tests {
         assert_eq!(status_of(&database, "manga").await, Some(1));
     }
 
-    /// Only genuinely reading a chapter moves Unread to Reading: merely
-    /// opening one (which records `last_read` without `read`) leaves the
-    /// manga Unread, so a previewed series is not claimed as being read.
-    #[tokio::test]
-    async fn only_read_chapters_advance_to_reading() {
-        let directory = tempdir().unwrap();
-        let database = Database::new(&directory.path().join("database.sqlite"))
-            .await
-            .unwrap();
-        let marked =
-            manga_with_progress_fixture(&database, "marked", &[Some(1.0), Some(2.0)], None).await;
-        let opened =
-            manga_with_progress_fixture(&database, "opened", &[Some(1.0), Some(2.0)], None).await;
-
-        // Opening a chapter records `last_read` without `read`; that must
-        // not advance the status.
-        database
-            .update_last_read_chapter(&ChapterId::new(opened.clone(), "chapter1".to_string()))
-            .await
-            .unwrap();
-        assert_eq!(status_of(&database, "opened").await, Some(1));
-
-        database
-            .mark_chapter_as_read(
-                &ChapterId::new(marked.clone(), "chapter0".to_string()),
-                Some(true),
-            )
-            .await
-            .unwrap();
-        assert_eq!(status_of(&database, "marked").await, Some(2));
-    }
-
     /// Full progression on genuinely read chapters: opening the first
-    /// chapter leaves the manga Unread, marking it moves Unread to
-    /// Reading, and marking the last one parks a still-publishing manga
-    /// On Hold.
+    /// chapter leaves the manga Unread (merely opening records `last_read`
+    /// without `read`, so a previewed series is not claimed as read),
+    /// marking it moves Unread to Reading, and marking the last one parks
+    /// a still-publishing manga On Hold.
     #[tokio::test]
     async fn full_progression_reaches_terminal_status_on_read_chapters() {
         let directory = tempdir().unwrap();
@@ -3389,26 +3310,6 @@ mod tests {
         assert_eq!(status_of(&database, "manga").await, Some(3));
     }
 
-    /// A fully read manga that is still publishing goes On Hold, not
-    /// Completed: there may be more chapters to come.
-    #[tokio::test]
-    async fn fully_read_ongoing_manga_moves_to_on_hold() {
-        let directory = tempdir().unwrap();
-        let database = Database::new(&directory.path().join("database.sqlite"))
-            .await
-            .unwrap();
-        let id =
-            manga_with_progress_fixture(&database, "manga", &[Some(1.0), Some(2.0)], Some(1)).await;
-
-        for chapter in ["chapter0", "chapter1"] {
-            database
-                .mark_chapter_as_read(&ChapterId::new(id.clone(), chapter.to_string()), Some(true))
-                .await
-                .unwrap();
-        }
-        assert_eq!(status_of(&database, "manga").await, Some(3));
-    }
-
     /// A fully read manga whose publishing status is Completed (2) or
     /// Cancelled (3) is Completed: nothing more will ever appear.
     #[tokio::test]
@@ -3432,21 +3333,27 @@ mod tests {
         }
     }
 
-    /// Without a terminal publishing status the automation parks a fully
-    /// read manga On Hold: Unknown (0), and a missing `manga_details` row
-    /// which reads the same way.
+    /// Without a terminal publishing status a fully read manga goes On
+    /// Hold: Ongoing (1) may still gain chapters, Unknown (0) and a
+    /// missing `manga_details` row read the same way.
     #[tokio::test]
     async fn fully_read_manga_without_terminal_status_moves_to_on_hold() {
         let directory = tempdir().unwrap();
         let database = Database::new(&directory.path().join("database.sqlite"))
             .await
             .unwrap();
+        let ongoing =
+            manga_with_progress_fixture(&database, "ongoing", &[Some(1.0)], Some(1)).await;
         let unknown =
             manga_with_progress_fixture(&database, "unknown", &[Some(1.0)], Some(0)).await;
         let no_details =
             manga_with_progress_fixture(&database, "no-details", &[Some(1.0)], None).await;
 
-        for (name, id) in [("unknown", unknown), ("no-details", no_details)] {
+        for (name, id) in [
+            ("ongoing", ongoing),
+            ("unknown", unknown),
+            ("no-details", no_details),
+        ] {
             database
                 .mark_chapter_as_read(
                     &ChapterId::new(id.clone(), "chapter0".to_string()),
@@ -3454,7 +3361,11 @@ mod tests {
                 )
                 .await
                 .unwrap();
-            assert_eq!(status_of(&database, name).await, Some(3));
+            assert_eq!(
+                status_of(&database, name).await,
+                Some(3),
+                "{name} should move to On Hold"
+            );
         }
     }
 
