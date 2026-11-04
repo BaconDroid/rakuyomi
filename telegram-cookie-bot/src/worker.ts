@@ -66,6 +66,10 @@ async function setupWebhook(): Promise<void> {
       console.warn("PUBLIC_URL is not set; skipping webhook registration")
       return
     }
+    if (!getEnv().WEBHOOK_SECRET) {
+      console.warn("WEBHOOK_SECRET is not set; skipping webhook registration")
+      return
+    }
     // A Worker cannot long-poll, so webhooks are the only way Telegram can
     // deliver updates here. The secret token makes the endpoint reject
     // anything that did not come from Telegram.

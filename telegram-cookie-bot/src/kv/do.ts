@@ -24,6 +24,8 @@ interface StoredEntry {
 /** How often the alarm sweeps entries that were never read again. */
 const SWEEP_INTERVAL_MS = 60_000
 
+const MAX_KEYS_PER_DELETE = 128
+
 // Keys are arrays in the Deno KV style. They are encoded as JSON so that
 // prefix scans work with Durable Object storage, which only supports string
 // keys.
@@ -102,7 +104,7 @@ export class KvDurableObject extends DurableObject {
               value: entry.v,
             })
           }
-          if (expired.length > 0) await this.ctx.storage.delete(expired)
+          if (expired.length > 0) await this.deleteKeys(expired)
           return json({ entries })
         }
         default:
@@ -132,8 +134,14 @@ export class KvDurableObject extends DurableObject {
   ): Promise<void> {
     const entry: StoredEntry = { v: value }
     if (expireIn !== undefined) entry.e = Date.now() + expireIn
-    await this.ctx.storage.put(storageKey, entry)
     await this.scheduleSweep()
+    await this.ctx.storage.put(storageKey, entry)
+  }
+
+  private async deleteKeys(keys: string[]): Promise<void> {
+    for (let i = 0; i < keys.length; i += MAX_KEYS_PER_DELETE) {
+      await this.ctx.storage.delete(keys.slice(i, i + MAX_KEYS_PER_DELETE))
+    }
   }
 
   private isExpired(entry: StoredEntry): boolean {
@@ -156,7 +164,7 @@ export class KvDurableObject extends DurableObject {
     >()) {
       if (this.isExpired(entry)) expired.push(storageKey)
     }
-    if (expired.length > 0) await this.ctx.storage.delete(expired)
+    if (expired.length > 0) await this.deleteKeys(expired)
 
     const remaining = await this.ctx.storage.list<StoredEntry>({ limit: 1 })
     if (remaining.size > 0) {
