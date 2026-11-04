@@ -46,6 +46,10 @@ fn image_retry_referer(site: &Url) -> Option<reqwest::header::HeaderValue> {
     reqwest::header::HeaderValue::from_str(&origin).ok()
 }
 
+fn is_html_page(bytes: &[u8], html_content_type: bool) -> bool {
+    looks_like_html(bytes) || (html_content_type && detect_image_extension(bytes).is_none())
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
 pub struct DownloadError {
     pub page_index: usize,
@@ -316,6 +320,8 @@ where
 
                             // TODO we could stream the data from the client into the file
                             // would save a bit of memory but i dont think its a big deal
+                            let mut attempts = 1;
+                            let mut html_content_type = false;
                             let response_bytes = if matches!(
                                 &source.backend,
                                 crate::source::SourceBackend::Keiyoushi(_)
@@ -390,13 +396,12 @@ where
                                 // requires one. Retry an HTML/forbidden response once
                                 // using the source site's origin as Referer when the
                                 // source provides a site URL.
-                                let html_response = headers
+                                html_content_type = headers
                                     .get(reqwest::header::CONTENT_TYPE)
                                     .and_then(|value| value.to_str().ok())
                                     .is_some_and(|value| value.to_ascii_lowercase().contains("text/html"));
                                 if (status == reqwest::StatusCode::FORBIDDEN
-                                    || looks_like_html(&response_bytes)
-                                    || (html_response && detect_image_extension(&response_bytes).is_none()))
+                                    || is_html_page(&response_bytes, html_content_type))
                                     && !req_headers.contains_key(reqwest::header::REFERER)
                                 {
                                     if let (Some(mut retry), Some(site)) =
@@ -406,6 +411,7 @@ where
                                             if let Some(referer) = image_retry_referer(&site) {
                                                 retry.headers_mut().insert(reqwest::header::REFERER, referer);
                                                 req_headers = retry.headers().clone();
+                                                attempts = 2;
                                                 let retry_response =
                                                     request_with_forced_referer_from_request(&client, retry, 10).await?;
                                                 status = retry_response.status();
@@ -415,6 +421,10 @@ where
                                                 } else {
                                                     Bytes::new()
                                                 };
+                                                html_content_type = headers
+                                                    .get(reqwest::header::CONTENT_TYPE)
+                                                    .and_then(|value| value.to_str().ok())
+                                                    .is_some_and(|value| value.to_ascii_lowercase().contains("text/html"));
                                             }
                                         }
                                     }
@@ -425,7 +435,7 @@ where
                                         page_index: page.index,
                                         url: req_url.to_string(),
                                         reason: format!("HTTP {}", status),
-                                        attempts: 1,
+                                        attempts,
                                     };
 
                                     eprintln!("{:?}", err);
@@ -533,13 +543,13 @@ where
                             };
 
                             // Never put an HTML access/error page into a CBZ as an image.
-                            if looks_like_html(&final_bytes) {
+                            if is_html_page(&final_bytes, html_content_type) {
                                 let reason = "image server returned HTML instead of an image".to_string();
                                 let err = DownloadError {
                                     page_index: page.index,
                                     url: page_url.as_ref().map(ToString::to_string).unwrap_or_default(),
                                     reason: reason.clone(),
-                                    attempts: 1,
+                                    attempts,
                                 };
                                 return Ok((
                                     page.index,
@@ -854,6 +864,24 @@ mod tests {
         let site = Url::parse("ftp://example.com/files").unwrap();
 
         assert!(image_retry_referer(&site).is_none());
+    }
+
+    #[test]
+    fn test_is_html_page_rejects_a_plain_text_body_labelled_html() {
+        assert!(is_html_page(b"Access denied", true));
+        assert!(!is_html_page(b"Access denied", false));
+    }
+
+    #[test]
+    fn test_is_html_page_detects_an_html_document_without_the_header() {
+        assert!(is_html_page(b"<!doctype html><html>blocked</html>", false));
+    }
+
+    #[test]
+    fn test_is_html_page_accepts_an_image_labelled_html() {
+        let jpeg = [0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46];
+
+        assert!(!is_html_page(&jpeg, true));
     }
 
     fn write_test_zip() -> std::fs::File {
