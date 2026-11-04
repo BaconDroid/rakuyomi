@@ -684,26 +684,28 @@ fn host_storage_keys(storage: Arc<Mutex<HashMap<String, String>>>) -> impl Fn() 
     }
 }
 
+/// WHATWG `TextDecoder` turns an incomplete trailing byte into U+FFFD.
+fn decode_utf16(bytes: &[u8], unit: fn([u8; 2]) -> u16) -> String {
+    let (chunks, remainder) = bytes.as_chunks::<2>();
+    let mut units = Vec::with_capacity(chunks.len() + 1);
+    units.extend(chunks.iter().map(|chunk| unit(*chunk)));
+    let pending_high_surrogate = units
+        .last()
+        .is_some_and(|unit| (0xD800..=0xDBFF).contains(unit));
+    if !remainder.is_empty() && !pending_high_surrogate {
+        units.push(0xFFFD);
+    }
+    String::from_utf16_lossy(&units)
+}
+
 /// Decodes bytes using the given encoding name (as accepted by `TextDecoder`).
 fn decode_bytes(bytes: &[u8], encoding: &str) -> Result<String> {
     let encoding = encoding.to_lowercase().replace('_', "-");
     let encoding = encoding.trim();
     match encoding {
         "" | "utf-8" | "utf8" => Ok(String::from_utf8_lossy(bytes).into_owned()),
-        "utf-16le" | "utf16le" | "unicode" => {
-            let mut u16s = Vec::with_capacity(bytes.len() / 2);
-            for chunk in bytes.as_chunks::<2>().0 {
-                u16s.push(u16::from_le_bytes(*chunk));
-            }
-            Ok(String::from_utf16_lossy(&u16s))
-        }
-        "utf-16be" | "utf16be" => {
-            let mut u16s = Vec::with_capacity(bytes.len() / 2);
-            for chunk in bytes.as_chunks::<2>().0 {
-                u16s.push(u16::from_be_bytes(*chunk));
-            }
-            Ok(String::from_utf16_lossy(&u16s))
-        }
+        "utf-16le" | "utf16le" | "unicode" => Ok(decode_utf16(bytes, u16::from_le_bytes)),
+        "utf-16be" | "utf16be" => Ok(decode_utf16(bytes, u16::from_be_bytes)),
         // latin1 / windows-1252: bytes map directly to code points.
         "latin1" | "latin-1" | "iso-8859-1" | "windows-1252" | "cp1252" => {
             Ok(bytes.iter().map(|&b| b as char).collect())
@@ -854,8 +856,8 @@ mod tests {
     }
 
     /// TextDecoder support: UTF-16 decodes little and big endian byte pairs
-    /// while a trailing odd byte is dropped, and latin1 maps each byte to the
-    /// code point with the same value.
+    /// and replaces an incomplete trailing byte, and latin1 maps each byte to
+    /// the code point with the same value.
     #[test]
     fn decode_bytes_handles_utf16_and_latin1() {
         // "hi" in UTF-16LE (h = 0x68 0x00, i = 0x69 0x00).
@@ -868,8 +870,27 @@ mod tests {
             decode_bytes(&[0x00, 0x68, 0x00, 0x69], "utf-16be").unwrap(),
             "hi"
         );
-        // A trailing odd byte has no complete pair and is dropped.
-        assert_eq!(decode_bytes(&[0x68, 0x00, 0xFF], "utf-16le").unwrap(), "h");
+        // A trailing odd byte is replaced by exactly one U+FFFD, in both
+        // byte orders.
+        assert_eq!(
+            decode_bytes(&[0x68, 0x00, 0xFF], "utf-16le").unwrap(),
+            "h\u{FFFD}"
+        );
+        assert_eq!(
+            decode_bytes(&[0x00, 0x68, 0xFF], "utf-16be").unwrap(),
+            "h\u{FFFD}"
+        );
+        // A high surrogate left dangling by the odd byte is already replaced,
+        // so no second U+FFFD is emitted.
+        assert_eq!(
+            decode_bytes(&[0x00, 0xD8, 0xFF], "utf-16le").unwrap(),
+            "\u{FFFD}"
+        );
+        // A complete surrogate pair is still decoded as one code point.
+        assert_eq!(
+            decode_bytes(&[0x3D, 0xD8, 0x00, 0xDE], "utf-16le").unwrap(),
+            "\u{1F600}"
+        );
         // latin1 maps each byte to the code point with the same value.
         assert_eq!(decode_bytes(&[0xE9, 0x41], "latin1").unwrap(), "éA");
     }
