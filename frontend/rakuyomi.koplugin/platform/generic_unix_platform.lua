@@ -6,6 +6,7 @@ local ffiutil = require('ffi/util')
 local bit = require('bit')
 local Paths = require('Paths')
 local util = require('frontend/util')
+local time = require('ui/time')
 ---@diagnostic disable-next-line: different-requires
 local platformUtil = require('platform/util')
 local must = platformUtil.must
@@ -258,12 +259,12 @@ function UnixServer:stop()
   ---@param timeout number
   ---@return boolean
   local function waitForExit(timeout)
-    local deadline = ffiutil.getTimestamp() + timeout
+    local start = time.now()
     repeat
       if ffiutil.isSubProcessDone(self.pid) then
         return true
       end
-      if ffiutil.getTimestamp() >= deadline then
+      if time.since(start) >= time.s(timeout) then
         return false
       end
       ffiutil.usleep(100000)
