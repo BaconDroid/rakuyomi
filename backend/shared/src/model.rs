@@ -378,6 +378,20 @@ pub struct PlaylistManga {
     pub manga_id: String,
 }
 
+/// A reading status definition (e.g., Unread, Reading, On Hold).
+///
+/// The `id` doubles as the automation progression order, so ids must
+/// never be renumbered: clients persist them (the Lua library filter
+/// stores them in `rakuyomi_status_filter`), and
+/// `manga_reading_status.status_id` references this table with no
+/// `ON UPDATE CASCADE`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "sqlx", derive(sqlx::FromRow))]
+pub struct ReadingStatus {
+    pub id: i64,
+    pub name: String,
+}
+
 /// The result of an install request. A multi-source keiyoushi APK asks the
 /// user which languages to install before anything is written to disk.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
