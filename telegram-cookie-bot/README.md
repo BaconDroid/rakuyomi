@@ -133,10 +133,12 @@ so one `.env` covers both commands.
    URL changes.
 
 3. The Worker registers the Telegram webhook on the first request it serves.
-   Set it by hand if needed:
+   To set it by hand, export the token and the secret, then call the API:
 
-   ```
-   https://api.telegram.org/bot<BOT_TOKEN>/setWebhook?url=https://<your-worker>.workers.dev/webhook&secret_token=<WEBHOOK_SECRET>
+   ```sh
+   curl "https://api.telegram.org/bot${BOT_TOKEN}/setWebhook" \
+     --data-urlencode "url=https://<your-worker>.workers.dev/webhook" \
+     --data-urlencode "secret_token=${WEBHOOK_SECRET}"
    ```
 
 ### Environment variables
