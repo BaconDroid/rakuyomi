@@ -910,16 +910,32 @@ async fn link_tracking_binding(
 
     // Reconcile with the newly linked service: pull its progress, then push
     // local progress if the local reading history is ahead of it.
+    // The chapter storage lock is only needed for this read: the tracker
+    // requests that follow are network calls, and holding it across them
+    // blocks every other chapter request.
+    let chapters = {
+        let chapter_storage = chapter_storage.lock().await;
+        database
+            .find_cached_chapters(&manga_id, &chapter_storage, true)
+            .await?
+    };
+
     let mut settings = settings.lock().await;
-    let chapter_storage = chapter_storage.lock().await;
-    let _ = usecases::sync_manga_tracking_after_link(
+    if let Err(error) = usecases::sync_manga_tracking_after_link(
         &database,
-        &chapter_storage,
+        chapters,
         &mut settings,
         &manga_id,
         candidate.service,
     )
-    .await;
+    .await
+    {
+        warn!(
+            "linked manga {} to {} but could not sync progress: {error}",
+            manga_id.value(),
+            candidate.service.display_name()
+        );
+    }
     let _ = settings.save_to_file(&settings_path);
 
     Ok(Json(()))

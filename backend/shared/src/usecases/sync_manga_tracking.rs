@@ -4,7 +4,7 @@ use crate::{
     chapter_storage::ChapterStorage,
     database::Database,
     model::{
-        ChapterId, MangaId, TrackingProgressSnapshot, TrackingService, TrackingStatus,
+        Chapter, ChapterId, MangaId, TrackingProgressSnapshot, TrackingService, TrackingStatus,
         TrackingSyncDirection, TrackingSyncResult,
     },
     settings::Settings,
@@ -178,7 +178,7 @@ pub async fn sync_manga_tracking_push(
 /// The tracker's count is never lowered by this step.
 pub async fn sync_manga_tracking_after_link(
     db: &Database,
-    chapter_storage: &ChapterStorage,
+    chapters: Vec<Chapter>,
     settings: &mut Settings,
     manga_id: &MangaId,
     service: TrackingService,
@@ -191,15 +191,22 @@ pub async fn sync_manga_tracking_after_link(
     };
 
     let remote = tracking::fetch_remote_progress(settings, &binding).await?;
-    let chapters = db
-        .find_cached_chapters(manga_id, chapter_storage, true)
-        .await?;
     // Capture the local progress before the pull marks chapters as read:
     // applying the remote progress first can change the derived local value
     // (for example, a read-count fallback becomes the highest numeric
     // chapter), which would hide a local history that is ahead.
     let local = db.get_local_tracking_progress(manga_id).await?;
     apply_remote_progress(db, manga_id, &chapters, &remote).await?;
+
+    // The tracker can advance while the pull above is being applied, so the
+    // progress that gets pushed is read again: pushing the older pull would
+    // lower a value the tracker has just raised.
+    let remote = if local_is_ahead(local.chapter_progress, remote.chapter_progress) {
+        tracking::fetch_remote_progress(settings, &binding).await?
+    } else {
+        remote
+    };
+
     db.set_tracking_sync_state(
         manga_id,
         service,
@@ -228,9 +235,11 @@ pub async fn sync_manga_tracking_after_link(
             started_at: binding.started_at.or(remote.started_at),
             completed_at: binding.completed_at.or(remote.completed_at),
         };
-        // Auto-set completed_at when newly completing.
+        // Auto-set completed_at only when this push is what completes the
+        // entry; a completion that already exists on the tracker keeps its date.
         if matches!(push_snapshot.status, Some(TrackingStatus::Completed))
             && push_snapshot.completed_at.is_none()
+            && !matches!(remote.status, Some(TrackingStatus::Completed))
         {
             push_snapshot.completed_at = Some(chrono::Utc::now().timestamp());
         }
