@@ -10,6 +10,7 @@ local logger = require("logger")
 local _ = require("gettext+")
 local Backend = require("Backend")
 local shallow_clone = require("utils/shallowClone")
+local PageOverlap = require("utils/pageOverlap")
 local CbzDocument = require("extensions/CbzDocument")
 local realpath = require("ffi/util").realpath
 
@@ -194,6 +195,15 @@ function MangaReader:hookWithPriorityOntoReaderUiEvents(ui)
   if ui.paging and not ui.paging._rakuyomi_patched then
     local orig_onGotoViewRel = ui.paging.onGotoViewRel
     ui.paging.onGotoViewRel = function(paging_self, diff, ...)
+      if paging_self.view and paging_self.view.page_scroll then
+        -- Continuous modes: keep the configured percentage of the visible
+        -- content on screen after a page turn instead of jumping a full page.
+        local view_height = paging_self.view.visible_area and paging_self.view.visible_area.h
+        paging_self.overlap = PageOverlap.computePixels(
+          view_height,
+          G_reader_settings:readSetting('rakuyomi_page_overlap')
+        )
+      end
       if diff < 0 then
         local at_beginning = false
         if paging_self.view and paging_self.view.page_scroll then
@@ -566,20 +576,24 @@ function MangaReader:applyViewMode(ui)
   end
 
   if self.viewer ~= MangaViewer.DefaultViewer then
-    if G_reader_settings:nilOrFalse('rakuyomi_page_margin') and doc.configurable.page_margin ~= nil and doc.configurable.page_margin > 0 then
+    -- The recommended reader settings are opt-in: each one is only enforced
+    -- when its checkbox is enabled. Otherwise the reader settings configured by
+    -- the user (including the defaults set from KOReader's own menus) are left
+    -- untouched, so choices like "page crop: none" survive a chapter change.
+    if G_reader_settings:isTrue('rakuyomi_page_margin') and doc.configurable.page_margin ~= nil and doc.configurable.page_margin > 0 then
       -- -- recommend option
       ui:handleEvent(Event:new("ConfigChange", "page_margin", 0))
       ui:handleEvent(Event:new("MarginUpdate", 0))
     end
-    if G_reader_settings:nilOrFalse('rakuyomi_trim_page') and doc.configurable.trim_page ~= 1 then
+    if G_reader_settings:isTrue('rakuyomi_trim_page') and doc.configurable.trim_page ~= 1 then
       ui:handleEvent(Event:new("ConfigChange", "trim_page", 1))
       ui:handleEvent(Event:new("PageCrop", "auto"))
     end
-    if G_reader_settings:nilOrFalse('rakuyomi_zoom_mode_type') and doc.configurable.zoom_mode_type ~= 2 then
+    if G_reader_settings:isTrue('rakuyomi_zoom_mode_type') and doc.configurable.zoom_mode_type ~= 2 then
       ui:handleEvent(Event:new("ConfigChange", "zoom_mode_type", 2))
       ui:handleEvent(Event:new("DefineZoom", "full"))
     end
-    if G_reader_settings:nilOrFalse('rakuyomi_zoom_mode_genus') and doc.configurable.zoom_mode_genus ~= 3 then
+    if G_reader_settings:isTrue('rakuyomi_zoom_mode_genus') and doc.configurable.zoom_mode_genus ~= 3 then
       ui:handleEvent(Event:new("ConfigChange", "zoom_mode_genus", 3))
       ui:handleEvent(Event:new("DefineZoom", "content"))
     end
