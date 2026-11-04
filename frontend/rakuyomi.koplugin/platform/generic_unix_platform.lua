@@ -6,6 +6,7 @@ local ffiutil = require('ffi/util')
 local bit = require('bit')
 local Paths = require('Paths')
 local util = require('frontend/util')
+local time = require('ui/time')
 ---@diagnostic disable-next-line: different-requires
 local platformUtil = require('platform/util')
 local must = platformUtil.must
@@ -249,12 +250,56 @@ end
 
 function UnixServer:stop()
   local SIGTERM = 15
+  local SIGKILL = 9
+  local ESRCH = 3
+  local TERM_TIMEOUT_SECONDS = 2
+  local KILL_TIMEOUT_SECONDS = 2
+
+  --- Wait for the child without blocking indefinitely.
+  ---@param timeout number
+  ---@return boolean
+  local function waitForExit(timeout)
+    local start = time.now()
+    repeat
+      if ffiutil.isSubProcessDone(self.pid) then
+        return true
+      end
+      if time.since(start) >= time.s(timeout) then
+        return false
+      end
+      ffiutil.usleep(100000)
+    until false
+  end
 
   logger.info("Terminating subprocess with PID " .. self.pid)
-  must("kill", C.kill(self.pid, SIGTERM))
-  local done = ffiutil.isSubProcessDone(self.pid, true)
+  local result = C.kill(self.pid, SIGTERM)
+  if result < 0 then
+    local err = ffi.errno()
+    if err ~= ESRCH then
+      logger.warn("Failed to send SIGTERM to subprocess:", ffi.string(C.strerror(err)))
+    end
+  end
 
-  logger.info("Subprocess finished:", done)
+  if waitForExit(TERM_TIMEOUT_SECONDS) then
+    logger.info("Subprocess finished after SIGTERM")
+    return
+  end
+
+  logger.warn("Subprocess did not exit after SIGTERM; sending SIGKILL to PID " .. self.pid)
+  result = C.kill(self.pid, SIGKILL)
+  if result < 0 then
+    local err = ffi.errno()
+    if err ~= ESRCH then
+      logger.warn("Failed to send SIGKILL to subprocess:", ffi.string(C.strerror(err)))
+    end
+  end
+
+  if waitForExit(KILL_TIMEOUT_SECONDS) then
+    logger.info("Subprocess finished after SIGKILL")
+    return
+  end
+
+  logger.err("Subprocess could not be reaped before shutdown deadline:", self.pid)
 end
 
 function UnixServer:startLogCapture()

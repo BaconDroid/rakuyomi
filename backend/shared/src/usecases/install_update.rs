@@ -8,11 +8,23 @@ use std::time::Duration;
 use tempfile::{NamedTempFile, TempDir};
 use walkdir::WalkDir;
 
-pub async fn install_update(version: String, build_name: String) -> anyhow::Result<()> {
-    // Download the asset to a temporary file
-    let update_zip_file = download_update_zip(&version, &build_name).await?;
+/// Prefix of the temporary update downloads, also used when cleaning up
+/// leftovers from an interrupted download.
+const UPDATE_DOWNLOAD_PREFIX: &str = "rakuyomi-update-";
 
+pub async fn install_update(version: String, build_name: String) -> anyhow::Result<()> {
     let plugin_dir = resolve_plugin_dir().context("Could not get rakuyomi's plugin directory")?;
+
+    let parent_dir = plugin_dir
+        .parent()
+        .context("Could not get parent directory for plugin")?;
+
+    // Download the asset to a named temporary file created next to the plugin
+    // directory. The system temporary directory is not guaranteed to be
+    // writable there (on Android it can point to a SELinux-restricted location
+    // such as /data/local/tmp), while the plugin directory itself has to be
+    // writable for the update to be installed anyway.
+    let update_zip_file = download_update_zip(&version, &build_name, parent_dir).await?;
 
     // Get the path of the temporary file
     let zip_path = update_zip_file.path().to_path_buf();
@@ -24,7 +36,7 @@ pub async fn install_update(version: String, build_name: String) -> anyhow::Resu
     Ok(())
 }
 
-/// Remove the backup directory left behind after a successful update.
+/// Remove the backup directory and leftover update downloads.
 pub fn cleanup_update_backup() {
     let plugin_dir = match resolve_plugin_dir() {
         Ok(path) => path,
@@ -34,7 +46,15 @@ pub fn cleanup_update_backup() {
         }
     };
 
+    cleanup_update_artifacts(&plugin_dir);
+}
+
+fn cleanup_update_artifacts(plugin_dir: &Path) {
     cleanup_backup(&plugin_dir.with_extension("koplugin.bak"));
+
+    if let Some(parent_dir) = plugin_dir.parent() {
+        cleanup_tmp(parent_dir);
+    }
 }
 
 #[cfg(target_os = "android")]
@@ -71,25 +91,44 @@ fn resolve_plugin_dir() -> anyhow::Result<PathBuf> {
         .context("Could not get rakuyomi's plugin directory")
 }
 
-fn cleanup_tmp() -> anyhow::Result<()> {
-    let tmp_dir = std::env::temp_dir();
+/// Removes leftover update downloads from an interrupted attempt located in
+/// `tmp_dir`. Only regular files carrying [`UPDATE_DOWNLOAD_PREFIX`] are
+/// removed; directories are left alone because the plugin directory itself
+/// (and its backup) live next to the temporary files.
+fn cleanup_tmp(tmp_dir: &Path) {
+    let entries = match fs::read_dir(tmp_dir) {
+        Ok(entries) => entries,
+        Err(err) => {
+            warn!(
+                "Could not list {} to clean up temporary update files: {}",
+                tmp_dir.display(),
+                err
+            );
+            return;
+        }
+    };
 
-    for entry in std::fs::read_dir(&tmp_dir)? {
-        let path = entry?.path();
-        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-            if name.starts_with("rakuyomi") {
-                if path.is_dir() {
-                    let _ = std::fs::remove_dir_all(&path);
-                } else {
-                    let _ = std::fs::remove_file(&path);
-                }
-            }
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let is_update_download = path.is_file()
+            && path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with(UPDATE_DOWNLOAD_PREFIX));
+
+        if is_update_download {
+            let _ = fs::remove_file(&path);
         }
     }
-    Ok(())
 }
-/// Downloads the update zip file and saves it to a temporary file.
-async fn download_update_zip(version: &str, build_name: &str) -> anyhow::Result<NamedTempFile> {
+
+/// Downloads the update zip file and saves it to a named temporary file inside
+/// `temp_dir`.
+async fn download_update_zip(
+    version: &str,
+    build_name: &str,
+    temp_dir: &Path,
+) -> anyhow::Result<NamedTempFile> {
     let client = crate::tls::client_builder().build()?;
     let asset_name = format!("rakuyomi-{}.zip", build_name);
     let url = format!(
@@ -111,14 +150,19 @@ async fn download_update_zip(version: &str, build_name: &str) -> anyhow::Result<
     let mut stream = response.bytes_stream();
     let mut downloaded_bytes = 0;
 
-    // Retry loop: attempt twice (once + retry after cleanup)
+    // Retry loop: attempt twice (once + retry)
     for attempt in 0..2 {
         // Create a named temp file for the download
         let mut update_zip_file = tempfile::Builder::new()
-            .prefix("rakuyomi-update-")
+            .prefix(UPDATE_DOWNLOAD_PREFIX)
             .suffix(".zip")
-            .tempfile()
-            .context("Could not create named temporary file for download")?;
+            .tempfile_in(temp_dir)
+            .with_context(|| {
+                format!(
+                    "Could not create named temporary file for download in {}",
+                    temp_dir.display()
+                )
+            })?;
 
         // Reset stream on retry
         if attempt == 1 {
@@ -168,11 +212,11 @@ async fn download_update_zip(version: &str, build_name: &str) -> anyhow::Result<
             return Ok(update_zip_file); // SUCCESS
         }
 
-        // If fail → cleanup + retry
+        // If fail > retry. Only this attempt's file is discarded: it is the
+        // NamedTempFile created above, which removes itself on drop, while
+        // other downloads in the directory may belong to a concurrent update.
         if attempt == 0 {
-            info!("Cleaning /tmp before retry…");
-            cleanup_tmp()?;
-            info!("Retrying download…");
+            info!("Retrying download...");
         }
     }
 
@@ -375,5 +419,63 @@ fn rollback_update(plugin_dir: &Path, backup_dir: &Path) {
             "Rollback step skipped: Backup directory {} not found.",
             backup_dir.display()
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cleanup_update_artifacts_removes_backup_and_leftover_downloads() {
+        let temp_dir = tempfile::tempdir().expect("temporary directory");
+        let plugin_dir = temp_dir.path().join("rakuyomi.koplugin");
+        let backup_dir = plugin_dir.with_extension("koplugin.bak");
+        let download = temp_dir
+            .path()
+            .join(format!("{}interrupted.zip", UPDATE_DOWNLOAD_PREFIX));
+        let unrelated = temp_dir.path().join("keep.txt");
+
+        fs::create_dir(&plugin_dir).expect("create plugin directory");
+        fs::create_dir(&backup_dir).expect("create backup directory");
+        fs::write(&download, b"zip").expect("write leftover download");
+        fs::write(&unrelated, b"keep").expect("write unrelated file");
+
+        cleanup_update_artifacts(&plugin_dir);
+
+        assert!(!backup_dir.exists(), "backup directory should be removed");
+        assert!(!download.exists(), "leftover download should be removed");
+        assert!(plugin_dir.exists(), "plugin directory must be kept");
+        assert!(unrelated.exists(), "unrelated files must be kept");
+    }
+
+    #[test]
+    fn cleanup_tmp_removes_only_update_downloads() {
+        let temp_dir = tempfile::tempdir().expect("temporary directory");
+        let download = temp_dir
+            .path()
+            .join(format!("{}123.zip", UPDATE_DOWNLOAD_PREFIX));
+        let prefixed_dir = temp_dir
+            .path()
+            .join(format!("{}extracted", UPDATE_DOWNLOAD_PREFIX));
+        let plugin_dir = temp_dir.path().join("rakuyomi.koplugin");
+        let unrelated = temp_dir.path().join("keep.txt");
+
+        fs::write(&download, b"zip").expect("write download");
+
+        for dir in [&prefixed_dir, &plugin_dir] {
+            fs::create_dir(dir).expect("create directory");
+        }
+        fs::write(&unrelated, b"keep").expect("write unrelated file");
+
+        cleanup_tmp(temp_dir.path());
+
+        assert!(!download.exists(), "leftover download should be removed");
+        assert!(prefixed_dir.exists(), "directories must never be removed");
+        assert!(
+            plugin_dir.exists(),
+            "plugin directory must never be removed"
+        );
+        assert!(unrelated.exists(), "unrelated files must be kept");
     }
 }

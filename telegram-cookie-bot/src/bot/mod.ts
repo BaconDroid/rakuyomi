@@ -72,15 +72,18 @@ export function createBot(): Bot {
   return bot
 }
 
-export async function registerBotCommands(bot: Bot) {
+export async function registerBotCommands(bot: Bot): Promise<string[]> {
+  const failed: string[] = []
   for (const lang of SUPPORTED_LANGUAGES) {
     const code = LANG_MAP[lang.code]
     if (!code) continue
+    let registered = false
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
         await bot.api.setMyCommands(buildCommands(lang.code), {
           language_code: code,
         })
+        registered = true
         break
       } catch (e: unknown) {
         const err = e as {
@@ -97,10 +100,8 @@ export async function registerBotCommands(bot: Bot) {
         }
       }
     }
+    if (!registered) failed.push(lang.code)
     await new Promise((r) => setTimeout(r, 1000))
   }
-}
-
-export function getWebhookHandler(bot: Bot) {
-  return webhookCallback(bot, "std/http")
+  return failed
 }

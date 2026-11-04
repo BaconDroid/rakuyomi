@@ -2,7 +2,7 @@ use dom_query::Document;
 use futures::{stream, StreamExt};
 use reqwest::redirect::Policy;
 use std::{
-    io::{Cursor, Seek, Write},
+    io::{Cursor, Read, Seek, Write},
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
@@ -10,6 +10,7 @@ use std::{
 use tempfile::NamedTempFile;
 use tokio_util::bytes::Bytes;
 use tokio_util::sync::CancellationToken;
+use url::Url;
 
 use anyhow::{anyhow, Context};
 use tokio::sync::mpsc;
@@ -26,9 +27,28 @@ use crate::{
     unscrable_image::{unscrable_image, Block},
     util::{
         create_xhtml, detect_image_extension, download_all_images, generate_error_image,
-        get_image_src, into_html, prepare_cover, request_with_forced_referer_from_request,
+        get_image_src, into_html, looks_like_html, prepare_cover,
+        request_with_forced_referer_from_request,
     },
 };
+
+/// Builds the `Referer` header used when retrying an image download with the
+/// source site's URL.
+///
+/// Only the origin (`scheme://host[:port]/`) is used so the site's path and
+/// query parameters (which may carry tokens) never leak to image hosts.
+fn image_retry_referer(site: &Url) -> Option<reqwest::header::HeaderValue> {
+    if !matches!(site.scheme(), "http" | "https") {
+        return None;
+    }
+
+    let origin = format!("{}/", site.origin().ascii_serialization());
+    reqwest::header::HeaderValue::from_str(&origin).ok()
+}
+
+fn is_html_page(bytes: &[u8], html_content_type: bool) -> bool {
+    looks_like_html(bytes) || (html_content_type && detect_image_extension(bytes).is_none())
+}
 
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
 pub struct DownloadError {
@@ -182,6 +202,49 @@ fn zip_comment(chapter_id: &ChapterId) -> String {
     .to_string()
 }
 
+/// `epub-builder` 0.8.3 has no hook to set a ZIP comment, and the frontend
+/// reads it back (`Shared:getOrigin`) to recognise the chapter exports it wrote.
+fn set_zip_comment(file: &mut std::fs::File, comment: &[u8]) -> anyhow::Result<()> {
+    const EOCD_SIGNATURE: [u8; 4] = [b'P', b'K', 0x05, 0x06];
+    const EOCD_LEN: u64 = 22;
+    const MAX_COMMENT_LEN: usize = u16::MAX as usize;
+    const MAX_SCAN_LEN: u64 = EOCD_LEN + MAX_COMMENT_LEN as u64;
+
+    if comment.len() > MAX_COMMENT_LEN {
+        return Err(anyhow!(
+            "ZIP comment is {} bytes, the record only holds {MAX_COMMENT_LEN}",
+            comment.len()
+        ));
+    }
+
+    let file_len = file.metadata()?.len();
+    if file_len < EOCD_LEN {
+        return Err(anyhow!(
+            "not a ZIP archive: {file_len} bytes is shorter than the end of central directory record"
+        ));
+    }
+
+    let scan_start = file_len.saturating_sub(MAX_SCAN_LEN);
+    let mut tail = vec![0; (file_len - scan_start) as usize];
+    file.seek(std::io::SeekFrom::Start(scan_start))?;
+    file.read_exact(&mut tail)?;
+
+    let eocd_offset = tail
+        .windows(EOCD_SIGNATURE.len())
+        .rposition(|window| window == EOCD_SIGNATURE)
+        .map(|position| scan_start + position as u64)
+        .ok_or_else(|| anyhow!("not a ZIP archive: no end of central directory record"))?;
+
+    file.seek(std::io::SeekFrom::Start(eocd_offset + 20))?;
+    file.write_all(&(comment.len() as u16).to_le_bytes())?;
+    file.set_len(eocd_offset + EOCD_LEN)?;
+    file.seek(std::io::SeekFrom::Start(eocd_offset + EOCD_LEN))?;
+    file.write_all(comment)?;
+    file.flush()?;
+
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn download_chapter_pages_as_cbz<W>(
     cancel_token: &CancellationToken,
@@ -201,8 +264,8 @@ where
     let mut processed = 0f32;
 
     let mut writer = ZipWriter::new(output);
-    let file_options: zip::write::FileOptions<'_, ()> =
-        zip::write::FileOptions::default().compression_method(CompressionMethod::Stored);
+    let file_options =
+        zip::write::SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
 
     // Add ComicInfo.xml to the CBZ file
     writer.start_file("ComicInfo.xml", file_options)?;
@@ -257,6 +320,8 @@ where
 
                             // TODO we could stream the data from the client into the file
                             // would save a bit of memory but i dont think its a big deal
+                            let mut attempts = 1;
+                            let mut html_content_type = false;
                             let response_bytes = if matches!(
                                 &source.backend,
                                 crate::source::SourceBackend::Keiyoushi(_)
@@ -311,20 +376,66 @@ where
                                         err
                                     })?;
                                 let req_url = request.url().clone();
-                                let req_headers = request.headers().clone();
+                                let retry_request = request.try_clone();
+                                let mut req_headers = request.headers().clone();
                                 let response =
                                     request_with_forced_referer_from_request(&client, request, 10)
                                         .await
                                         .inspect_err(|err| {
                                             eprintln!("Request error: {err}");
                                         })?;
+                                let mut status = response.status();
+                                let mut headers = response.headers().clone();
+                                let mut response_bytes = if status.is_success() {
+                                    response.bytes().await?
+                                } else {
+                                    Bytes::new()
+                                };
 
-                                if !response.status().is_success() {
+                                // A source may omit Referer even though its image host
+                                // requires one. Retry an HTML/forbidden response once
+                                // using the source site's origin as Referer when the
+                                // source provides a site URL.
+                                html_content_type = headers
+                                    .get(reqwest::header::CONTENT_TYPE)
+                                    .and_then(|value| value.to_str().ok())
+                                    .is_some_and(|value| value.to_ascii_lowercase().contains("text/html"));
+                                if (status == reqwest::StatusCode::FORBIDDEN
+                                    || is_html_page(&response_bytes, html_content_type))
+                                    && !req_headers.contains_key(reqwest::header::REFERER)
+                                {
+                                    if let (Some(mut retry), Some(site)) =
+                                        (retry_request, source.manifest().info.url)
+                                    {
+                                        if let Ok(site) = Url::parse(&site) {
+                                            if let Some(referer) = image_retry_referer(&site) {
+                                                retry.headers_mut().insert(reqwest::header::REFERER, referer);
+                                                req_headers = retry.headers().clone();
+                                                attempts = 2;
+                                                let retry_response =
+                                                    request_with_forced_referer_from_request(&client, retry, 10).await?;
+                                                status = retry_response.status();
+                                                headers = retry_response.headers().clone();
+                                                response_bytes = if status.is_success() {
+                                                    retry_response.bytes().await?
+                                                } else {
+                                                    Bytes::new()
+                                                };
+                                                html_content_type = headers
+                                                    .get(reqwest::header::CONTENT_TYPE)
+                                                    .and_then(|value| value.to_str().ok())
+                                                    .is_some_and(|value| value.to_ascii_lowercase().contains("text/html"));
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if !status.is_success() {
                                     let err = DownloadError {
                                         page_index: page.index,
                                         url: req_url.to_string(),
-                                        reason: format!("HTTP {}", response.status()),
-                                        attempts: 1,
+                                        reason: format!("HTTP {}", status),
+                                        attempts,
                                     };
 
                                     eprintln!("{:?}", err);
@@ -333,22 +444,14 @@ where
                                         page.index,
                                         format!("{:0>page_index_width$}.{}", page.index, extension),
                                         generate_error_image(
-                                            &response.status().as_u16().to_string(),
-                                            response
-                                                .status()
-                                                .canonical_reason()
-                                                .unwrap_or("Unknown Error"),
+                                            &status.as_u16().to_string(),
+                                            status.canonical_reason().unwrap_or("Unknown Error"),
                                             500,
                                             667,
                                         )?,
                                         Some(err),
                                     ));
                                 }
-
-                                let status = response.status();
-                                let headers = response.headers().clone();
-
-                                let response_bytes = response.bytes().await?;
 
                                 if source.features.process_page_image() {
                                     Bytes::from(
@@ -438,6 +541,23 @@ where
                             } else {
                                 final_bytes
                             };
+
+                            // Never put an HTML access/error page into a CBZ as an image.
+                            if is_html_page(&final_bytes, html_content_type) {
+                                let reason = "image server returned HTML instead of an image".to_string();
+                                let err = DownloadError {
+                                    page_index: page.index,
+                                    url: page_url.as_ref().map(ToString::to_string).unwrap_or_default(),
+                                    reason: reason.clone(),
+                                    attempts,
+                                };
+                                return Ok((
+                                    page.index,
+                                    format!("{:0>page_index_width$}.jpg", page.index),
+                                    generate_error_image("Error", &reason, 500, 667)?,
+                                    Some(err),
+                                ));
+                            }
 
                             Ok::<_, anyhow::Error>((page.index, filename, final_bytes, error_info))
                         }
@@ -591,7 +711,7 @@ where
 
         let mut epub = EpubBuilder::new(ZipLibrary::new()?)?;
         if let Some(lang) = lang {
-            epub.set_lang(lang);
+            epub.add_language(lang);
         }
         epub.set_title(book_name);
 
@@ -685,7 +805,8 @@ where
                     }
                 }
 
-                let xhtml = create_xhtml(&title, document.select_single("body").html().as_ref());
+                let xhtml =
+                    create_xhtml(&title, document.select_single("body").inner_html().as_ref());
 
                 epub.add_content(
                     EpubContent::new(format!("pages/page_{}.xhtml", idx + 1), Cursor::new(xhtml))
@@ -706,12 +827,113 @@ where
             }
         }
 
-        epub.set_zip_comment(&comment);
         epub.generate(&mut output)?;
+        set_zip_comment(&mut output, comment.as_bytes())?;
 
         Ok(())
     })
     .await??;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_image_retry_referer_keeps_only_the_origin() {
+        let site = Url::parse("https://example.com/manga/series?token=secret#page").unwrap();
+
+        let referer = image_retry_referer(&site).unwrap();
+
+        assert_eq!(referer.to_str().unwrap(), "https://example.com/");
+    }
+
+    #[test]
+    fn test_image_retry_referer_keeps_an_explicit_port() {
+        let site = Url::parse("http://example.com:8080/reader?token=secret").unwrap();
+
+        let referer = image_retry_referer(&site).unwrap();
+
+        assert_eq!(referer.to_str().unwrap(), "http://example.com:8080/");
+    }
+
+    #[test]
+    fn test_image_retry_referer_rejects_non_http_schemes() {
+        let site = Url::parse("ftp://example.com/files").unwrap();
+
+        assert!(image_retry_referer(&site).is_none());
+    }
+
+    #[test]
+    fn test_is_html_page_rejects_a_plain_text_body_labelled_html() {
+        assert!(is_html_page(b"Access denied", true));
+        assert!(!is_html_page(b"Access denied", false));
+    }
+
+    #[test]
+    fn test_is_html_page_detects_an_html_document_without_the_header() {
+        assert!(is_html_page(b"<!doctype html><html>blocked</html>", false));
+    }
+
+    #[test]
+    fn test_is_html_page_accepts_an_image_labelled_html() {
+        let jpeg = [0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46];
+
+        assert!(!is_html_page(&jpeg, true));
+    }
+
+    fn write_test_zip() -> std::fs::File {
+        let mut file = tempfile::tempfile().unwrap();
+        {
+            let mut writer = ZipWriter::new(&mut file);
+            writer
+                .start_file("page.xhtml", zip::write::SimpleFileOptions::default())
+                .unwrap();
+            writer.write_all(b"<html/>").unwrap();
+            writer.finish().unwrap();
+        }
+        file.seek(std::io::SeekFrom::Start(0)).unwrap();
+        file
+    }
+
+    fn read_test_zip_comment(mut file: std::fs::File) -> Vec<u8> {
+        file.seek(std::io::SeekFrom::Start(0)).unwrap();
+        zip::ZipArchive::new(file).unwrap().comment().to_vec()
+    }
+
+    #[test]
+    fn test_set_zip_comment_is_read_back_by_a_zip_reader() {
+        let mut file = write_test_zip();
+        let comment = zip_comment(&ChapterId::from_strings(
+            "vi.test".to_string(),
+            "manga-1".to_string(),
+            "chapter-1".to_string(),
+        ));
+
+        set_zip_comment(&mut file, comment.as_bytes()).unwrap();
+
+        assert_eq!(read_test_zip_comment(file), comment.as_bytes());
+    }
+
+    #[test]
+    fn test_set_zip_comment_replaces_a_previous_comment() {
+        let mut file = write_test_zip();
+        set_zip_comment(&mut file, b"first").unwrap();
+        set_zip_comment(&mut file, b"second").unwrap();
+
+        assert_eq!(read_test_zip_comment(file), b"second");
+    }
+
+    #[test]
+    fn test_set_zip_comment_rejects_a_file_without_an_eocd_record() {
+        let mut file = tempfile::tempfile().unwrap();
+        file.write_all(b"not a zip archive, but long enough to be scanned")
+            .unwrap();
+
+        let error = set_zip_comment(&mut file, b"comment").unwrap_err();
+
+        assert!(error.to_string().contains("no end of central directory"));
+    }
 }
