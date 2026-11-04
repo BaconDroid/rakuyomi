@@ -2,7 +2,7 @@ use dom_query::Document;
 use futures::{stream, StreamExt};
 use reqwest::redirect::Policy;
 use std::{
-    io::{Cursor, Seek, Write},
+    io::{Cursor, Read, Seek, Write},
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
@@ -196,6 +196,49 @@ fn zip_comment(chapter_id: &ChapterId) -> String {
         "chapter_id": chapter_id.value(),
     })
     .to_string()
+}
+
+/// `epub-builder` 0.8.3 has no hook to set a ZIP comment, and the frontend
+/// reads it back (`Shared:getOrigin`) to recognise the chapter exports it wrote.
+fn set_zip_comment(file: &mut std::fs::File, comment: &[u8]) -> anyhow::Result<()> {
+    const EOCD_SIGNATURE: [u8; 4] = [b'P', b'K', 0x05, 0x06];
+    const EOCD_LEN: u64 = 22;
+    const MAX_COMMENT_LEN: usize = u16::MAX as usize;
+    const MAX_SCAN_LEN: u64 = EOCD_LEN + MAX_COMMENT_LEN as u64;
+
+    if comment.len() > MAX_COMMENT_LEN {
+        return Err(anyhow!(
+            "ZIP comment is {} bytes, the record only holds {MAX_COMMENT_LEN}",
+            comment.len()
+        ));
+    }
+
+    let file_len = file.metadata()?.len();
+    if file_len < EOCD_LEN {
+        return Err(anyhow!(
+            "not a ZIP archive: {file_len} bytes is shorter than the end of central directory record"
+        ));
+    }
+
+    let scan_start = file_len.saturating_sub(MAX_SCAN_LEN);
+    let mut tail = vec![0; (file_len - scan_start) as usize];
+    file.seek(std::io::SeekFrom::Start(scan_start))?;
+    file.read_exact(&mut tail)?;
+
+    let eocd_offset = tail
+        .windows(EOCD_SIGNATURE.len())
+        .rposition(|window| window == EOCD_SIGNATURE)
+        .map(|position| scan_start + position as u64)
+        .ok_or_else(|| anyhow!("not a ZIP archive: no end of central directory record"))?;
+
+    file.seek(std::io::SeekFrom::Start(eocd_offset + 20))?;
+    file.write_all(&(comment.len() as u16).to_le_bytes())?;
+    file.set_len(eocd_offset + EOCD_LEN)?;
+    file.seek(std::io::SeekFrom::Start(eocd_offset + EOCD_LEN))?;
+    file.write_all(comment)?;
+    file.flush()?;
+
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -774,8 +817,8 @@ where
             }
         }
 
-        epub.set_zip_comment(&comment);
         epub.generate(&mut output)?;
+        set_zip_comment(&mut output, comment.as_bytes())?;
 
         Ok(())
     })
@@ -811,5 +854,58 @@ mod tests {
         let site = Url::parse("ftp://example.com/files").unwrap();
 
         assert!(image_retry_referer(&site).is_none());
+    }
+
+    fn write_test_zip() -> std::fs::File {
+        let mut file = tempfile::tempfile().unwrap();
+        {
+            let mut writer = ZipWriter::new(&mut file);
+            writer
+                .start_file("page.xhtml", zip::write::SimpleFileOptions::default())
+                .unwrap();
+            writer.write_all(b"<html/>").unwrap();
+            writer.finish().unwrap();
+        }
+        file.seek(std::io::SeekFrom::Start(0)).unwrap();
+        file
+    }
+
+    fn read_test_zip_comment(mut file: std::fs::File) -> Vec<u8> {
+        file.seek(std::io::SeekFrom::Start(0)).unwrap();
+        zip::ZipArchive::new(file).unwrap().comment().to_vec()
+    }
+
+    #[test]
+    fn test_set_zip_comment_is_read_back_by_a_zip_reader() {
+        let mut file = write_test_zip();
+        let comment = zip_comment(&ChapterId::from_strings(
+            "vi.test".to_string(),
+            "manga-1".to_string(),
+            "chapter-1".to_string(),
+        ));
+
+        set_zip_comment(&mut file, comment.as_bytes()).unwrap();
+
+        assert_eq!(read_test_zip_comment(file), comment.as_bytes());
+    }
+
+    #[test]
+    fn test_set_zip_comment_replaces_a_previous_comment() {
+        let mut file = write_test_zip();
+        set_zip_comment(&mut file, b"first").unwrap();
+        set_zip_comment(&mut file, b"second").unwrap();
+
+        assert_eq!(read_test_zip_comment(file), b"second");
+    }
+
+    #[test]
+    fn test_set_zip_comment_rejects_a_file_without_an_eocd_record() {
+        let mut file = tempfile::tempfile().unwrap();
+        file.write_all(b"not a zip archive, but long enough to be scanned")
+            .unwrap();
+
+        let error = set_zip_comment(&mut file, b"comment").unwrap_err();
+
+        assert!(error.to_string().contains("no end of central directory"));
     }
 }
