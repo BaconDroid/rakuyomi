@@ -36,7 +36,7 @@ pub async fn install_update(version: String, build_name: String) -> anyhow::Resu
     Ok(())
 }
 
-/// Remove the backup directory left behind after a successful update.
+/// Remove the backup directory and leftover update downloads.
 pub fn cleanup_update_backup() {
     let plugin_dir = match resolve_plugin_dir() {
         Ok(path) => path,
@@ -46,7 +46,15 @@ pub fn cleanup_update_backup() {
         }
     };
 
+    cleanup_update_artifacts(&plugin_dir);
+}
+
+fn cleanup_update_artifacts(plugin_dir: &Path) {
     cleanup_backup(&plugin_dir.with_extension("koplugin.bak"));
+
+    if let Some(parent_dir) = plugin_dir.parent() {
+        cleanup_tmp(parent_dir);
+    }
 }
 
 #[cfg(target_os = "android")]
@@ -142,7 +150,7 @@ async fn download_update_zip(
     let mut stream = response.bytes_stream();
     let mut downloaded_bytes = 0;
 
-    // Retry loop: attempt twice (once + retry after cleanup)
+    // Retry loop: attempt twice (once + retry)
     for attempt in 0..2 {
         // Create a named temp file for the download
         let mut update_zip_file = tempfile::Builder::new()
@@ -204,11 +212,11 @@ async fn download_update_zip(
             return Ok(update_zip_file); // SUCCESS
         }
 
-        // If fail → cleanup + retry
+        // If fail > retry. Only this attempt's file is discarded: it is the
+        // NamedTempFile created above, which removes itself on drop, while
+        // other downloads in the directory may belong to a concurrent update.
         if attempt == 0 {
-            info!("Cleaning temporary update files before retry...");
-            cleanup_tmp(temp_dir);
-            info!("Retrying download…");
+            info!("Retrying download...");
         }
     }
 
@@ -417,6 +425,29 @@ fn rollback_update(plugin_dir: &Path, backup_dir: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cleanup_update_artifacts_removes_backup_and_leftover_downloads() {
+        let temp_dir = tempfile::tempdir().expect("temporary directory");
+        let plugin_dir = temp_dir.path().join("rakuyomi.koplugin");
+        let backup_dir = plugin_dir.with_extension("koplugin.bak");
+        let download = temp_dir
+            .path()
+            .join(format!("{}interrupted.zip", UPDATE_DOWNLOAD_PREFIX));
+        let unrelated = temp_dir.path().join("keep.txt");
+
+        fs::create_dir(&plugin_dir).expect("create plugin directory");
+        fs::create_dir(&backup_dir).expect("create backup directory");
+        fs::write(&download, b"zip").expect("write leftover download");
+        fs::write(&unrelated, b"keep").expect("write unrelated file");
+
+        cleanup_update_artifacts(&plugin_dir);
+
+        assert!(!backup_dir.exists(), "backup directory should be removed");
+        assert!(!download.exists(), "leftover download should be removed");
+        assert!(plugin_dir.exists(), "plugin directory must be kept");
+        assert!(unrelated.exists(), "unrelated files must be kept");
+    }
 
     #[test]
     fn cleanup_tmp_removes_only_update_downloads() {
