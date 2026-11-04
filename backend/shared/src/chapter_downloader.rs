@@ -30,6 +30,20 @@ use crate::{
     },
 };
 
+/// Returns whether `bytes` is an HTML or plain-text error page rather
+/// than image data, so it never lands in a CBZ as an image. A supported
+/// image signature never starts with `<`, so a markup payload is
+/// rejected outright, and a `text/html` response carrying no image
+/// signature is rejected too (e.g. a plain-text "Access denied" body).
+fn is_html_page(bytes: &[u8], html_content_type: bool) -> bool {
+    let markup = bytes
+        .strip_prefix(b"\xef\xbb\xbf")
+        .unwrap_or(bytes)
+        .trim_ascii_start()
+        .starts_with(b"<");
+    markup || (html_content_type && detect_image_extension(bytes).is_none())
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
 pub struct DownloadError {
     pub page_index: usize,
@@ -257,6 +271,7 @@ where
 
                             // TODO we could stream the data from the client into the file
                             // would save a bit of memory but i dont think its a big deal
+                            let mut html_content_type = false;
                             let response_bytes = if matches!(
                                 &source.backend,
                                 crate::source::SourceBackend::Keiyoushi(_)
@@ -347,6 +362,12 @@ where
 
                                 let status = response.status();
                                 let headers = response.headers().clone();
+                                html_content_type = headers
+                                    .get(reqwest::header::CONTENT_TYPE)
+                                    .and_then(|value| value.to_str().ok())
+                                    .is_some_and(|value| {
+                                        value.to_ascii_lowercase().contains("text/html")
+                                    });
 
                                 let response_bytes = response.bytes().await?;
 
@@ -438,6 +459,23 @@ where
                             } else {
                                 final_bytes
                             };
+
+                            // Never put an HTML access/error page into a CBZ as an image.
+                            if is_html_page(&final_bytes, html_content_type) {
+                                let reason = "image server returned HTML instead of an image".to_string();
+                                let err = DownloadError {
+                                    page_index: page.index,
+                                    url: page_url.as_ref().map(ToString::to_string).unwrap_or_default(),
+                                    reason: reason.clone(),
+                                    attempts: 1,
+                                };
+                                return Ok((
+                                    page.index,
+                                    format!("{:0>page_index_width$}.jpg", page.index),
+                                    generate_error_image("Error", &reason, 500, 667)?,
+                                    Some(err),
+                                ));
+                            }
 
                             Ok::<_, anyhow::Error>((page.index, filename, final_bytes, error_info))
                         }
@@ -714,4 +752,27 @@ where
     .await??;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_html_page_rejects_a_plain_text_body_labelled_html() {
+        assert!(is_html_page(b"Access denied", true));
+        assert!(!is_html_page(b"Access denied", false));
+    }
+
+    #[test]
+    fn test_is_html_page_detects_an_html_document_without_the_header() {
+        assert!(is_html_page(b"<!doctype html><html>blocked</html>", false));
+    }
+
+    #[test]
+    fn test_is_html_page_accepts_an_image_labelled_html() {
+        let jpeg = [0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46];
+
+        assert!(!is_html_page(&jpeg, true));
+    }
 }
