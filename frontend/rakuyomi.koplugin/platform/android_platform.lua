@@ -113,7 +113,7 @@ function AndroidPlatform:startServer()
       "3. Disallow Battery Optimization for the app (Xiaomi/Huawei).",
       "",
       "Download Link:",
-      "https://github.com/tachibana-shin/rakuyomi_bridge/releases",
+      "https://github.com/BaconDroid/rakuyomi/releases",
     }
     return AndroidServer:new(error_lines)
   end

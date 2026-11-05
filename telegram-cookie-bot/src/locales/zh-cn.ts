@@ -124,8 +124,8 @@ const zhCn: Locale = {
     "/donate — 支持开发",
 
   github: "Rakuyomi 是开源软件！\n\n" +
-    "GitHub: https://github.com/tachibana-shin/rakuyomi\n" +
-    "报告问题: https://github.com/tachibana-shin/rakuyomi/issues",
+    "GitHub: https://github.com/BaconDroid/rakuyomi\n" +
+    "报告问题: https://github.com/BaconDroid/rakuyomi/issues",
 
   donate: "如果您觉得此项目有用，请考虑支持开发者:\n\n" +
     "Ko-fi: https://ko-fi.com/tachib_shin\n" +
