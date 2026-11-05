@@ -1,3 +1,10 @@
+## [1.44.5](https://github.com/BaconDroid/rakuyomi/compare/v1.44.4...v1.44.5) (2026-11-05)
+
+
+### Bug Fixes
+
+* **frontend:** keep the close button when the title bar is rebuilt ([f3524f5](https://github.com/BaconDroid/rakuyomi/commit/f3524f5b7c422a89ad7f7a211acebee6670fdf23))
+
 ## [1.44.4](https://github.com/BaconDroid/rakuyomi/compare/v1.44.3...v1.44.4) (2026-11-05)
 
 
