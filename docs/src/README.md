@@ -2,39 +2,36 @@
 
 **rakuyomi** is a manga reader plugin for [KOReader](https://github.com/koreader/koreader).
 
+> [!IMPORTANT]
 >
 > This is a maintained fork of rakuyomi, the continuation of [@hanatsumi](https://github.com/hanatsumi)'s original project that Tachibana Shin took over when she stopped using e-readers. Credit for both belongs to them.
 >
 > The upstream repositories were deleted in 2026, so this fork hosts the releases, the update channel and this guide.
 >
 > `rakuyomi` currently supports all [Aidoku](https://github.com/Aidoku) sources including sources written with legacy SDK or next SDK ([Aidoku Community Sources](https://github.com/Aidoku-Community/sources)...)
+>
+> It also supports extensions from **LNReader**, **Mangayomi** (JavaScript and Dart), and **Tachiyomi/Mihon (Keiyoushi)**, and plugin image DRM.
+
+## Android Support
+
+rakuyomi runs on Android through the **Rakuyomi Bridge** companion app, which loads the Rust server via JNI and runs it as a foreground service. That app is **no longer distributed**: its repository went with the upstream account, so there is no public download for `RakuyomiBridge.apk` or `RakuyomiBridgeHeadless.apk`. `rakuyomi-android.zip` is still built and published here, but it needs a bridge APK you already have.
+
+> [!TIP]
+> If you want to run Rakuyomi as soon as you open KOReader, use this plugin: https://github.com/mgrimace/startrakuyomi.koplugin
 
 Features:
-
 - Added last read time for manga, chapter
 - Improved UI now you can see exactly which source manga belongs to
 - Added cancel download methods to avoid freezing
 - Fixed back button not working properly
 - Added processing menu in chapter list
 - Added "continue read"
-- Correct write processing to save RAM to avoid freezing KoReader
+- Correct write processing to save RAM to avoid freezing KOReader
 - Added cleaner to free up memory
 - Improved SQLite query method to speed up all operations by `200 times` including: library access, search, chapter list (`x300 times`)
 - Details manga
 - Aidoku source new SDK (0.7) support
 
-<table>
-  <tr>
-    <td><img width="200" alt="image" src="https://github.com/user-attachments/assets/cccf4076-79d3-4eb2-af80-62266b0e7ede" /></td>
-    <td><img src="https://github.com/user-attachments/assets/4edec936-8034-4467-bdce-5b060d799967" width="200" /></td>
-    <td><img src="https://github.com/user-attachments/assets/1c5d29fe-5a2f-4bf9-8437-bd1afe1b4e8b" width="200" /></td>
-  </tr>
-<tr>
-  <td><img src="https://github.com/user-attachments/assets/89397e28-65ae-46dc-b36f-dfc1d5e5b78c" width="200" /></td>
-  <td><img src="https://github.com/user-attachments/assets/e71a161f-ffa0-4109-b602-3c36d3fddc2f" width="200" /></td>
-  <td><img src="https://github.com/user-attachments/assets/36957374-89fb-490c-bea9-f52f750ca1d9" width="200" /></td>
-</tr>
-</table>
 <em>Open source for Every One</em>
 
 <p align="center">
@@ -43,5 +40,30 @@ Features:
     <em><small><a href="https://seotch.wordpress.com/ubunchu/">"Ubunchu!"</a> by Hiroshi Seo is licensed under <a href="https://creativecommons.org/licenses/by-nc/3.0/">CC BY-NC 3.0</a>.</small></em>
 </p>
 
->
->
+## Installation & Usage
+
+For detailed installation and usage instructions, please check out the [Installation](./user-guide/installation/README.md) and [Quickstart](./user-guide/quickstart.md) sections on our user guide.
+
+Builds are published on this fork's [releases](https://github.com/BaconDroid/rakuyomi/releases), and the plugin's update check reads them.
+
+## Cookie Sync Bot
+
+Rakuyomi includes a Telegram bot for syncing Cloudflare cookies from your Android browser to your e-reader.
+
+### Setup
+
+1. Open Telegram and start the bot (or your self-hosted instance).
+2. In KOReader, go to **Rakuyomi > Settings > Cookie Sync**
+3. Tap **Pair Device** > enter the bot URL > send `/link CODE NAME` to the bot
+4. Install [Get cookies.txt LOCALLY](https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc) in Kiwi Browser
+5. When a source returns 403, export cookies via the extension and paste the JSON array into the bot chat
+
+The Rust backend automatically syncs cookies on 403 and retries. If the retry also fails, the bot sends a notification so you know to refresh cookies.
+
+### Self-hosting
+
+See [telegram-cookie-bot/README.md](https://github.com/BaconDroid/rakuyomi/blob/main/telegram-cookie-bot/README.md) for deployment instructions.
+
+## Contributing
+
+For information on how to contribute to rakuyomi, please check out the [Setting up the Environment](https://bacondroid.github.io/rakuyomi/contributing/setting-up-the-environment.html) section on our guide.

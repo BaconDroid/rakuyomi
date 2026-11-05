@@ -59,7 +59,7 @@ Features:
 
 ## Installation & Usage
 
-For detailed installation and usage instructions, please check out the [Installation](https://bacondroid.github.io/rakuyomi/user-guide/installation/) and [Quickstart](https://bacondroid.github.io/rakuyomi/user-guide/quickstart) sections on our user guide!
+For detailed installation and usage instructions, please check out the [Installation](https://bacondroid.github.io/rakuyomi/user-guide/installation/README.html) and [Quickstart](https://bacondroid.github.io/rakuyomi/user-guide/quickstart) sections on our user guide!
 
 Builds are published on this repository's [releases](https://github.com/BaconDroid/rakuyomi/releases), and the plugin's update check reads them: installing a build from here is what moves an existing install onto this fork.
 
