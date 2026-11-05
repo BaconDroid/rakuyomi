@@ -115,11 +115,7 @@ pub enum LibrarySortingMode {
 }
 
 impl LibrarySortingMode {
-    /// Returns the ORDER BY clause for the library and playlist manga queries.
-    ///
-    /// Both queries alias their base table (`manga_library` and
-    /// `playlist_mangas` respectively) to the same `ml` alias, so a single
-    /// clause serves both and the queries stay mirror images of each other.
+    /// One clause serves both listings: they alias their base table to `ml`.
     pub fn order_by_clause(&self) -> &'static str {
         match self {
             Self::Ascending => "ORDER BY ml.rowid ASC, mi.title ASC",

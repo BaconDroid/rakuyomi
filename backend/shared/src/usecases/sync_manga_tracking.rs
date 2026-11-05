@@ -169,13 +169,9 @@ pub async fn sync_manga_tracking_push(
     Ok(results)
 }
 
-/// Reconciles progress right after a manga has been linked to `service`.
-///
-/// The local reading history is captured first, then the tracker's progress is
-/// pulled, marking those chapters as read locally. If the captured local
-/// progress is ahead of the tracker (for example, chapters read before the
-/// manga was linked), the local progress is pushed so the tracker catches up.
-/// The tracker's count is never lowered by this step.
+/// Pulls the tracker's progress after a link, then pushes the local one when it
+/// is ahead, so chapters read before linking are not lost. Never lowers the
+/// tracker's count.
 pub async fn sync_manga_tracking_after_link(
     db: &Database,
     chapters: Vec<Chapter>,
@@ -191,16 +187,13 @@ pub async fn sync_manga_tracking_after_link(
     };
 
     let remote = tracking::fetch_remote_progress(settings, &binding).await?;
-    // Capture the local progress before the pull marks chapters as read:
-    // applying the remote progress first can change the derived local value
-    // (for example, a read-count fallback becomes the highest numeric
-    // chapter), which would hide a local history that is ahead.
+    // Read local progress before the pull rewrites it, or a history that is
+    // ahead can become invisible.
     let local = db.get_local_tracking_progress(manga_id).await?;
     apply_remote_progress(db, manga_id, &chapters, &remote).await?;
 
-    // The tracker can advance while the pull above is being applied, so the
-    // progress that gets pushed is read again: pushing the older pull would
-    // lower a value the tracker has just raised.
+    // Re-read before pushing: the pull may predate a tracker update and would
+    // overwrite it.
     let remote = if local_is_ahead(local.chapter_progress, remote.chapter_progress) {
         tracking::fetch_remote_progress(settings, &binding).await?
     } else {
@@ -218,9 +211,8 @@ pub async fn sync_manga_tracking_after_link(
     .await?;
 
     if local_is_ahead(local.chapter_progress, remote.chapter_progress) {
-        // Build the push snapshot explicitly so we preserve remote-owned fields
-        // that the generic push path cannot see: volume progress and any
-        // non-Planning status (Paused, Dropped, Repeating, Completed).
+        // Built by hand: the generic push path cannot see the remote's volume
+        // count or a non-Planning status.
         let status = derive_link_push_status(
             local.chapter_progress,
             remote.status,
@@ -235,8 +227,7 @@ pub async fn sync_manga_tracking_after_link(
             started_at: binding.started_at.or(remote.started_at),
             completed_at: binding.completed_at.or(remote.completed_at),
         };
-        // Auto-set completed_at only when this push is what completes the
-        // entry; a completion that already exists on the tracker keeps its date.
+        // Only date a completion this push causes; a remote one keeps its date.
         if matches!(push_snapshot.status, Some(TrackingStatus::Completed))
             && push_snapshot.completed_at.is_none()
             && !matches!(remote.status, Some(TrackingStatus::Completed))
