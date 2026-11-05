@@ -132,7 +132,7 @@ async fn download_update_zip(
     let client = crate::tls::client_builder().build()?;
     let asset_name = format!("rakuyomi-{}.zip", build_name);
     let url = format!(
-        "https://github.com/tachibana-shin/rakuyomi/releases/download/v{}/{}",
+        "https://github.com/BaconDroid/rakuyomi/releases/download/v{}/{}",
         version, asset_name
     );
 
