@@ -4,29 +4,22 @@
 
 > [!IMPORTANT]
 >
-> The original author of the [@hanatsumi](https://github.com/hanatsumi) project no longer uses the e-link reader, so I am authorized to maintain this branch as the official branch.
+> This is a maintained fork of rakuyomi, the continuation of [@hanatsumi](https://github.com/hanatsumi)'s original project that Tachibana Shin took over when she stopped using e-readers. Credit for both belongs to them.
 >
-> Thank [@hanatsumi](https://github.com/hanatsumi) for the great work!!
-> 
-> `rakuyomi` currently supports all [Aidoku](https://github.com/Aidoku) sources including sources written with legacy SDK or next SDK ([Aidoku Community Sources](https://github.com/Aidoku-Community/sources), [Tachibana Shin Sources](https://github.com/tachibana-shin/aidoku-community-sources)...)
+> The upstream repositories were deleted in 2026, so this fork hosts the releases, the update channel and this guide.
 >
-> It also supports extensions from **LNReader**, **Mangayomi** (JavaScript and Dart), and **Tachiyomi/Mihon (Keiyoushi)**.
+> `rakuyomi` currently supports all [Aidoku](https://github.com/Aidoku) sources including sources written with legacy SDK or next SDK ([Aidoku Community Sources](https://github.com/Aidoku-Community/sources)...)
+>
+> It also supports extensions from **LNReader**, **Mangayomi** (JavaScript and Dart), and **Tachiyomi/Mihon (Keiyoushi)**, and plugin image DRM.
 
 ## Android Support
 
-rakuyomi runs on Android via the **Rakuyomi Bridge** companion app ([Rakuyomi Bridge](https://github.com/tachibana-shin/rakuyomi_bridge/)), which loads the Rust server via JNI and runs it as a foreground service.
-
-| Variant | Android Support |
-|---|---|
-| Rakuyomi Bridge (Compose) | Android 5.0+ (API 21+) |
-| Rakuyomi Bridge (Headless) | Android 4.3+ (API 18+) |
-
-Both are available on the [Releases](https://github.com/tachibana-shin/rakuyomi_bridge/releases) page.
+rakuyomi runs on Android through the **Rakuyomi Bridge** companion app, which loads the Rust server via JNI and runs it as a foreground service. That app is **no longer distributed**: its repository went with the upstream account, so there is no public download for `RakuyomiBridge.apk` or `RakuyomiBridgeHeadless.apk`. `rakuyomi-android.zip` is still built and published here, but it needs a bridge APK you already have.
 
 > [!TIP]
 > If you want to run Rakuyomi as soon as you open Koreader, use this plugin: https://github.com/mgrimace/startrakuyomi.koplugin
 
-This fork:
+Features:
 - Added last read time for manga, chapter
 - Improved UI now you can see exactly which source manga belongs to
 - Added cancel download methods to avoid freezing
@@ -64,15 +57,11 @@ This fork:
     <em><small><a href="https://seotch.wordpress.com/ubunchu/">"Ubunchu!"</a> by Hiroshi Seo is licensed under <a href="https://creativecommons.org/licenses/by-nc/3.0/">CC BY-NC 3.0</a>.</small></em>
 </p>
 
-> [!TIP]
->
-> This fork currently supports my Light Novel sources please check source this [vi.hakovn](https://github.com/tachibana-shin/aidoku-sources-next/tree/main/sources/vi.hakovn)
->
-> Now support plugin image DRM
-
 ## Installation & Usage
 
-For detailed installation and usage instructions, please check out the [Installation](https://tachibana-shin.github.io/rakuyomi/user-guide/installation/README.html) and [Quickstart](https://tachibana-shin.github.io/rakuyomi/user-guide/quickstart) sections on our user guide!
+For detailed installation and usage instructions, please check out the [Installation](https://bacondroid.github.io/rakuyomi/user-guide/installation/) and [Quickstart](https://bacondroid.github.io/rakuyomi/user-guide/quickstart) sections on our user guide!
+
+Builds are published on this repository's [releases](https://github.com/BaconDroid/rakuyomi/releases), and the plugin's update check reads them: installing a build from here is what moves an existing install onto this fork.
 
 ## Cookie Sync Bot
 
@@ -94,5 +83,5 @@ See [telegram-cookie-bot/README.md](telegram-cookie-bot/README.md) for deploymen
 
 ## Contributing
 
-For information on how to contribute to rakuyomi, please check out the [Setting up the Environment](https://tachibana-shin.github.io/rakuyomi/contributing/setting-up-the-environment.html) section on our guide!
+For information on how to contribute to rakuyomi, please check out the [Setting up the Environment](https://bacondroid.github.io/rakuyomi/contributing/setting-up-the-environment.html) section on our guide!
 

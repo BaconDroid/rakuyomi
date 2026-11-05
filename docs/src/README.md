@@ -3,13 +3,13 @@
 **rakuyomi** is a manga reader plugin for [KOReader](https://github.com/koreader/koreader).
 
 >
-> The original author of the [@hanatsumi](https://github.com/hanatsumi) project no longer uses the e-link reader, so I am authorized to maintain this branch as the official branch.
+> This is a maintained fork of rakuyomi, the continuation of [@hanatsumi](https://github.com/hanatsumi)'s original project that Tachibana Shin took over when she stopped using e-readers. Credit for both belongs to them.
 >
-> Thank [@hanatsumi](https://github.com/hanatsumi) for the great work!!
+> The upstream repositories were deleted in 2026, so this fork hosts the releases, the update channel and this guide.
 >
-> `rakuyomi` currently supports all [Aidoku](https://github.com/Aidoku) sources including sources written with legacy SDK or next SDK ([Aidoku Community Sources](https://github.com/Aidoku-Community/sources), [Tachibana Shin Sources](https://github.com/tachibana-shin/aidoku-community-sources)...)
+> `rakuyomi` currently supports all [Aidoku](https://github.com/Aidoku) sources including sources written with legacy SDK or next SDK ([Aidoku Community Sources](https://github.com/Aidoku-Community/sources)...)
 
-This fork:
+Features:
 
 - Added last read time for manga, chapter
 - Improved UI now you can see exactly which source manga belongs to
@@ -44,6 +44,4 @@ This fork:
 </p>
 
 >
-> This fork currently supports my Light Novel sources: [tachibana-shin/aidoku-community-sources](https://github.com/tachibana-shin/aidoku-community-sources)
 >
-> Now support plugin image DRM

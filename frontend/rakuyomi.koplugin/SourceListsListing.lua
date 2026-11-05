@@ -141,7 +141,7 @@ function SourceListsListing:showAddSourceList()
     title = _("Add source list"),
     input_hint = _("URL of the source list (index.json or plugins index)"),
     description = _("For example:") .. "\n\n" ..
-        "https://tachibana-shin.github.io/aidoku-sources-next/index.min.json\n" ..
+        "https://aidoku-community.github.io/sources/index.min.json\n" ..
         "https://github.com/lnreader/lnreader-plugins\n" ..
         "https://kodjodevf.github.io/mangayomi-extensions/index.json\n" ..
         "https://kodjodevf.github.io/mangayomi-extensions/novel_index.json\n" ..
