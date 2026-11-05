@@ -1,3 +1,26 @@
+## [1.44.4](https://github.com/BaconDroid/rakuyomi/compare/v1.44.3...v1.44.4) (2026-11-05)
+
+
+### Bug Fixes
+
+* **build:** replace the deleted epub-builder source with crates.io 0.8.3 ([a485e2a](https://github.com/BaconDroid/rakuyomi/commit/a485e2add33d17cd2f99b4bfc5c54b021d75cf5e))
+* **cookie-bot:** address review findings on the Workers migration ([e75fed3](https://github.com/BaconDroid/rakuyomi/commit/e75fed3b1f6662115b32a3ea492e73c3c8871901))
+* **downloader:** reject HTML bodies in the final CBZ guard and count retries ([366e2a2](https://github.com/BaconDroid/rakuyomi/commit/366e2a2a5673935277bc6a39f7f41cc9a3a649f4))
+* **frontend:** measure the shutdown deadline with the monotonic clock ([bfa3a70](https://github.com/BaconDroid/rakuyomi/commit/bfa3a70708803164e85e6ec70c4ff8961fd4af3f))
+* **library:** report no last_read timestamp for never-read manga ([f428e52](https://github.com/BaconDroid/rakuyomi/commit/f428e52938bd7e2326d80e81a0ca7ca9c6987510))
+* preserve zero default for last_read_time in CTE ([338a8e3](https://github.com/BaconDroid/rakuyomi/commit/338a8e393e4892f5c648cd4fa677a01e001e56c4))
+* remove bottom line from all titlebars ([3994f73](https://github.com/BaconDroid/rakuyomi/commit/3994f739b9b09ca7395c0d83b8eab6d28afb2e1a))
+* remove unused DGENERIC_ICON_SIZE from AvailableSourcesListing ([a02a56a](https://github.com/BaconDroid/rakuyomi/commit/a02a56a5c0935e231b005026a51cd418dc094a91))
+* restore idempotent guard in AvailableSourcesListing patchTitleBar ([5d743eb](https://github.com/BaconDroid/rakuyomi/commit/5d743eb92c712c9a153af04967c4e931ba8219ae))
+* return NULL from CTE, COALESCE in SELECT ([d5447a0](https://github.com/BaconDroid/rakuyomi/commit/d5447a03aa10bd5bbbec258e44c1d724066debb6))
+* **source:** reload an Aidoku source when its settings change ([98d16ad](https://github.com/BaconDroid/rakuyomi/commit/98d16ad64b4f5e183e99d9bf4e55e299a8fc56c1))
+* **source:** replace an incomplete UTF-16 trailing byte with U+FFFD ([e0414ca](https://github.com/BaconDroid/rakuyomi/commit/e0414ca04553ff3e1df1f325e1d7786e34e9e272))
+* **titlebar:** preserve bottom-line group in patched title bars ([0142d33](https://github.com/BaconDroid/rakuyomi/commit/0142d33433ec583902845f9c56080770d6fa801b))
+* **titlebar:** restore close button, align button order and icons ([2c08652](https://github.com/BaconDroid/rakuyomi/commit/2c08652c1b20e65c3f7c7edfeed2080b62b9e51e))
+* **tracking:** keep the post-link push from lowering tracker progress ([1030491](https://github.com/BaconDroid/rakuyomi/commit/10304911361721e2567630f0d8bba74f618affe1))
+* **update:** check and download updates from this fork ([5308e9d](https://github.com/BaconDroid/rakuyomi/commit/5308e9dcc1e8453da5e7d865108edbbb13c33734))
+* **update:** clean leftover downloads at startup and scope the retry cleanup ([ead9111](https://github.com/BaconDroid/rakuyomi/commit/ead911180e3bb743efbbee43172fdc5c72176909))
+
 ## [1.44.3](https://github.com/tachibana-shin/rakuyomi/compare/v1.44.2...v1.44.3) (2026-10-24)
 
 
