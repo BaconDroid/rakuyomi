@@ -1751,15 +1751,6 @@ mod tests {
         }
     }
 
-    fn dump_probe_definitions() {
-        let apk = std::env::var("RAKUYOMI_APK").unwrap();
-        let probe = probe_apk(&std::fs::read(&apk).unwrap()).unwrap();
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&probe.setting_definitions).unwrap()
-        );
-    }
-
     #[test]
     #[ignore = "needs RAKUYOMI_APK + network"]
     fn search_with_shrunk_regex_option() {
