@@ -26,7 +26,7 @@ pub async fn check_update(current_version: String) -> anyhow::Result<CheckUpdate
     // Get latest release from GitHub API
     let client = crate::tls::client_builder().build()?;
     let response = client
-        .get("https://api.github.com/repos/tachibana-shin/rakuyomi/releases/latest")
+        .get("https://api.github.com/repos/BaconDroid/rakuyomi/releases/latest")
         .header("User-Agent", "rakuyomi")
         .timeout(Duration::from_secs(10))
         .send()
