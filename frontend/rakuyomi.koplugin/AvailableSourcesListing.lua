@@ -13,10 +13,13 @@ local NetworkMgr = require("ui/network/manager")
 local _ = require("gettext+")
 local Testing = require("testing")
 local CheckboxDialog = require("CheckboxDialog")
+local titleBarTextButtonHeight = require("widgets/TitleBarButtonHeight")
 local format_languages = require("utils/formatLanguages")
 local langNames = require("utils/languageNames")
 ---@diagnostic disable-next-line: different-requires
 local util = require("util")
+
+local DGENERIC_ICON_SIZE = G_defaults:readSetting("DGENERIC_ICON_SIZE")
 
 local Font = require("ui/font")
 local SMALL_FONT_FACE = Font:getFace("smallffont")
@@ -334,7 +337,10 @@ function AvailableSourcesListing:patchTitleBar()
     return
   end
 
+  local left_icon_size_ratio = self.title_bar.left_icon_size_ratio
+  local left_icon_size = Screen:scaleBySize(DGENERIC_ICON_SIZE * left_icon_size_ratio)
   local button_padding = Screen:scaleBySize(11)
+  local text_button_height = titleBarTextButtonHeight(self.title_bar, left_icon_size, button_padding)
 
   local buttons = {}
 
@@ -345,8 +351,8 @@ function AvailableSourcesListing:patchTitleBar()
       face = SMALL_FONT_FACE,
       bordersize = 0,
       enabled = true,
+      height = text_button_height,
       padding = button_padding,
-      padding_bottom = button_padding,
       text_font_bold = false,
       callback = function()
         self:showSelectLanguage()
@@ -361,8 +367,8 @@ function AvailableSourcesListing:patchTitleBar()
       face = SMALL_FONT_FACE,
       bordersize = 0,
       enabled = true,
+      height = text_button_height,
       padding = button_padding,
-      padding_bottom = button_padding,
       text_font_bold = false,
       callback = function()
         self:showSelectRepos()
@@ -370,6 +376,9 @@ function AvailableSourcesListing:patchTitleBar()
     }
   end
 
+  -- HorizontalGroup centres its children, which would push the shorter ones
+  -- down into the margin above the bottom line.
+  buttons.align = "top"
   local filter_group = HorizontalGroup:new(buttons)
   -- KOReader puts the close button at [3] and this menu sets no left icon, so
   -- insert before it. Checking the slot first keeps a rebuilt title bar's own
