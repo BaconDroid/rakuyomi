@@ -1,8 +1,8 @@
 # Choosing a Build
 
-In order to install rakuyomi, you'll first need to choose the correct build for your e-reader device. Read the section according to your device, and then download the appropriate build of the [latest release](https://github.com/tachibana-shin/rakuyomi/releases/latest). With the correct build in hand, proceed to [install it to your device](./user-guide/installation/installing-to-your-device).
+In order to install rakuyomi, you'll first need to choose the correct build for your e-reader device. Read the section according to your device, and then download the appropriate build of the [latest release](https://github.com/BaconDroid/rakuyomi/releases/latest). With the correct build in hand, proceed to [install it to your device](./installing-to-your-device.md).
 
-If your device is unsupported or does not work with the given builds, feel free to open an issue on the [issue tracker](https://github.com/tachibana-shin/rakuyomi/issues)!
+If your device is unsupported or does not work with the given builds, feel free to open an issue on the [issue tracker](https://github.com/BaconDroid/rakuyomi/issues)!
 
 ## Kindle
 
@@ -60,8 +60,8 @@ The companion app (`RakuyomiBridge.apk` / `RakuyomiBridgeHeadless.apk`) runs the
 
 ### Installation steps
 
-1. Install the normal plugin: follow the [installing guide](./user-guide/installation/installing-to-your-device) — place the `rakuyomi.koplugin` folder into KOReader's plugin directory.
-2. Sideload `RakuyomiBridge.apk` / `RakuyomiBridgeHeadless.apk` from the [releases page](https://github.com/tachibana-shin/rakuyomi_bridge/releases/latest). (`RakuyomiBridge.exe` Abdroid 5+)
+1. Install the normal plugin: follow the [installing guide](./installing-to-your-device.md) — place the `rakuyomi.koplugin` folder into KOReader's plugin directory.
+2. Install the **Rakuyomi Bridge** APK. It is no longer published: the upstream repository that hosted it was deleted, so you need a copy you already have.
 3. Open the **Rakuyomi Bridge** app on your device.
 4. Grant the **"All files access"** permission when prompted (required for Android 11+).
 5. Tap **"Start Server"** in the app, or enable **"Start on boot"**.

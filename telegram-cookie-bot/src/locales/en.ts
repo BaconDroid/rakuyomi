@@ -180,8 +180,8 @@ const en: Locale = {
     "/donate — Support development",
 
   github: "<b>Rakuyomi is open-source!</b>\n\n" +
-    "GitHub: https://github.com/tachibana-shin/rakuyomi\n" +
-    "Issues & feature requests: https://github.com/tachibana-shin/rakuyomi/issues",
+    "GitHub: https://github.com/BaconDroid/rakuyomi\n" +
+    "Issues & feature requests: https://github.com/BaconDroid/rakuyomi/issues",
 
   donate:
     "If you find this project useful, consider supporting the developer:\n\n" +
