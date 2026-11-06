@@ -56,7 +56,7 @@ codegen-units = 1
 panic = "abort"
 EOF
 
-  # Build all required crates
+  # macOS builds on its own runner: cross has no macOS container.
   if [[ "$name" == "macos" ]]; then
     RUSTFLAGS="$base_flags" cargo build --release --target "$target"
   else
