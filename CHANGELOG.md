@@ -1,3 +1,13 @@
+## [1.45.1](https://github.com/BaconDroid/rakuyomi/compare/v1.45.0...v1.45.1) (2026-11-06)
+
+
+### Bug Fixes
+
+* **bot:** bump hono and zod to their patched releases ([a39d0ee](https://github.com/BaconDroid/rakuyomi/commit/a39d0ee14b0ba41df1542db5df68ac1670aa079a))
+* **deps:** move zip and pared to patched crates.io releases ([a2442c8](https://github.com/BaconDroid/rakuyomi/commit/a2442c8d94f1882e29a71a3bcf471772e5cc8ce0))
+* **e2e:** raise pillow and pytest to their patched releases ([3ed50ed](https://github.com/BaconDroid/rakuyomi/commit/3ed50edda586d054e8fd9f30dc417942665ae72e))
+* **e2e:** regenerate the lock against the patched versions ([017d353](https://github.com/BaconDroid/rakuyomi/commit/017d3539efa7431af44115223ec898497af8e755))
+
 # [1.45.0](https://github.com/BaconDroid/rakuyomi/compare/v1.44.5...v1.45.0) (2026-11-06)
 
 
