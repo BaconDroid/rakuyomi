@@ -12,9 +12,13 @@
 >
 > It also supports extensions from **LNReader**, **Mangayomi** (JavaScript and Dart), and **Tachiyomi/Mihon (Keiyoushi)**, and plugin image DRM.
 
-## Android Support
+## Supported platforms
 
-rakuyomi runs on Android through the **Rakuyomi Bridge** companion app, which loads the Rust server via JNI and runs it as a foreground service. That app is **no longer distributed**: its repository went with the upstream account, so there is no public download for `RakuyomiBridge.apk` or `RakuyomiBridgeHeadless.apk`. `rakuyomi-android.zip` is still built and published here, but it needs a bridge APK you already have.
+Releases are built for Kindle, Kobo, PocketBook, reMarkable, desktop Linux and Apple Silicon macOS.
+
+### Android: not supported
+
+Android needs the **Rakuyomi Bridge** companion app to load the Rust server through JNI, and that app went with the upstream account: nothing publishes `RakuyomiBridge.apk` anymore. The Android target is gone from CI for the same reason, so no `rakuyomi-android.zip` is released. Only the plugin zip was ever produced there, without the server it needs.
 
 > [!TIP]
 > If you want to run Rakuyomi as soon as you open KOReader, use this plugin: https://github.com/mgrimace/startrakuyomi.koplugin
