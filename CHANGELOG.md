@@ -1,3 +1,10 @@
+# [1.45.0](https://github.com/BaconDroid/rakuyomi/compare/v1.44.5...v1.45.0) (2026-11-06)
+
+
+### Features
+
+* **reading-status:** library filter, status picker and API ([979f5ad](https://github.com/BaconDroid/rakuyomi/commit/979f5adb4f0f69107929dddc654acf42ed4dd7e7))
+
 ## [1.44.5](https://github.com/BaconDroid/rakuyomi/compare/v1.44.4...v1.44.5) (2026-11-05)
 
 
