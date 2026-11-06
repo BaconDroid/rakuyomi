@@ -1,5 +1,8 @@
-blank_issues_enabled: true
+blank_issues_enabled: false
 contact_links:
-  - name: RakuYomi documentation
+  - name: Installation and user guide
     url: https://bacondroid.github.io/rakuyomi/
-    about: Read the user guide for installation, sources and troubleshooting.
+    about: Installing the plugin, adding sources, troubleshooting a 403.
+  - name: Release notes
+    url: https://github.com/BaconDroid/rakuyomi/releases
+    about: What changed in each version, and the plugin zips to download.
