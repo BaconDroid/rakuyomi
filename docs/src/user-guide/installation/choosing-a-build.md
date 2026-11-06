@@ -47,33 +47,15 @@ Users of the **reMarkable Paper Pro** should use the **AArch64** build. Other re
 
 Use the **Kindle** build.
 
+## Desktop Linux
+
+Use the **desktop** build.
+
+## Desktop macOS
+
+Use the **macOS** build. It targets Apple Silicon (`aarch64-apple-darwin`); Intel Macs are not built.
+
 ## BOOX and other Android-based e-readers
 
-Android e-readers are now supported (Android 4.3+ / API 18+). Android builds require two components:
+Not supported. Android e-readers need the **Rakuyomi Bridge** companion app to run the rakuyomi server, it is no longer published, and CI does not build the Android target, so no `rakuyomi-android.zip` is released.
 
-| Component | Description |
-|---|---|
-| `rakuyomi.koplugin` | Standard plugin package for KOReader |
-| `RakuyomiBridge.apk` / `RakuyomiBridgeHeadless.apk` | Companion app that runs the rakuyomi server |
-
-The companion app (`RakuyomiBridge.apk` / `RakuyomiBridgeHeadless.apk`) runs the rakuyomi HTTP server on `http://127.0.0.1:8787`. The KOReader plugin connects to it automatically.
-
-### Installation steps
-
-1. Install the normal plugin: follow the [installing guide](./installing-to-your-device.md) — place the `rakuyomi.koplugin` folder into KOReader's plugin directory.
-2. Install the **Rakuyomi Bridge** APK. It is no longer published: the upstream repository that hosted it was deleted, so you need a copy you already have.
-3. Open the **Rakuyomi Bridge** app on your device.
-4. Grant the **"All files access"** permission when prompted (required for Android 11+).
-5. Tap **"Start Server"** in the app, or enable **"Start on boot"**.
-6. Open KOReader and launch rakuyomi as usual. The plugin will connect automatically.
-
-> **Note**: Both KOReader and the companion app share the same data directory (`/storage/emulated/0/koreader/rakuyomi/`), so sources, downloads, and databases are stored in a single location.
-
----
-
-### ⚠️ Important Note for Xiaomi Devices (MIUI / HyperOS)
-
-To ensure **Rakuyomi Bridge** maintains a stable background connection and is not aggressively terminated by the system, you must adjust the following settings in the **App Info** page of the Rakuyomi Bridge app:
-
-*   **Disable App Hibernation:** Turn off the **"Pause app activity if unused"** option.
-*   **Adjust Battery Settings:** Change the Battery Saver profile to **"No restrictions"**.

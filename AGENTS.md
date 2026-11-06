@@ -51,12 +51,12 @@ Architecture: `Backend.lua` (Lua) → HTTP/JSON → `server` (axum, Rust) → SQ
 
 ```sh
 scripts/build-all.sh <target>   # cross-compile + package plugin
-scripts/build-android.sh        # build libserver.so + APK
 ```
 
-CI (root): `.github/workflows/build.yml` — 5 targets via `cross` + Podman.
-builds Rust `.so` via `scripts/build-rust-android.sh`, then runs Gradle
-lint/test/assemble for the Android companion app.
+CI (root): `.github/workflows/build.yml` - 5 Linux targets via `cross` + Podman
+(`desktop`, `aarch64`, `kindle`, `kindlehf`, `kindlea9`) plus `macos` on a
+`macos-14` runner, built with plain `cargo`. The Android targets are not built:
+no bridge APK is published, and the plugin zip alone is unusable without it.
 Versioning: `semantic-release` from commit messages.
 
 ## Platform Architecture
