@@ -3159,8 +3159,9 @@ dependencies = [
 
 [[package]]
 name = "pared"
-version = "0.3.0"
-source = "git+https://github.com/hanatsumi/pared.git?branch=feat%2Funwrap-or-clone#6852f59f6ee8570603e313bae9c62dbcb360b126"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "71f23325adb6d7beb334b39d9defe38ae5221847e0b8b3bd1e447a94e5944709"
 
 [[package]]
 name = "parking"
@@ -4455,7 +4456,7 @@ dependencies = [
  "wasmi",
  "wat",
  "webpki-roots",
- "zip 9.0.4",
+ "zip 9.0.5",
  "zune-core",
  "zune-jpeg",
  "zune-png",
@@ -6091,9 +6092,9 @@ dependencies = [
 
 [[package]]
 name = "zip"
-version = "9.0.4"
+version = "9.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a954114b47a54df49f83d2722814e86b23d4bb1b54a1b90fb7d92b41619ddc22"
+checksum = "6e04976da629d3b04204ba8105b396a193af8ad2583b2c79bfb3ab8af580a11e"
 dependencies = [
  "bzip2",
  "crc32fast",
