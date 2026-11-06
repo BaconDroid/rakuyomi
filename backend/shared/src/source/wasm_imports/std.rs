@@ -637,11 +637,11 @@ fn object_set(
         .context("failed to get value in object_set")?
         .as_ref()
         .clone();
-    let mut hm_value = Parc::unwrap_or_clone(
-        wasm_store
-            .get_std_value(descriptor)
-            .context("failed to take value in object_set")?,
-    );
+    let mut hm_value = wasm_store
+        .get_std_value(descriptor)
+        .context("failed to take value in object_set")?
+        .as_ref()
+        .clone();
     wasm_store.take_std_value(descriptor);
     let object_value = hm_value
         .try_unwrap_object_mut()
@@ -676,11 +676,11 @@ fn object_remove(
     let key = read_memory_string(&memory, &caller, key_offset, key_len)
         .context("failed to read key string in object_remove")?;
     let wasm_store = caller.data_mut();
-    let mut value = Parc::unwrap_or_clone(
-        wasm_store
-            .get_std_value(descriptor)
-            .context("failed to take value in object_remove")?,
-    );
+    let mut value = wasm_store
+        .get_std_value(descriptor)
+        .context("failed to take value in object_remove")?
+        .as_ref()
+        .clone();
     wasm_store.take_std_value(descriptor);
     let object_value = value
         .try_unwrap_object_mut()
@@ -790,11 +790,11 @@ fn array_set(
     let value_ref = wasm_store
         .get_std_value(value_descriptor)
         .context("failed to get value in array_set")?;
-    let mut array_value = Parc::unwrap_or_clone(
-        wasm_store
-            .get_std_value(descriptor)
-            .context("failed to take value in array_set")?,
-    );
+    let mut array_value = wasm_store
+        .get_std_value(descriptor)
+        .context("failed to take value in array_set")?
+        .as_ref()
+        .clone();
     wasm_store.take_std_value(descriptor);
     let array = array_value
         .try_unwrap_array_mut()
@@ -835,7 +835,7 @@ fn array_append(
             Parc::strong_count(&array_value_ref)
         );
     }
-    let mut array_value_ref = Parc::unwrap_or_clone(array_value_ref);
+    let mut array_value_ref = array_value_ref.as_ref().clone();
     let array_value = array_value_ref
         .try_unwrap_array_mut()
         .map_err(|_| anyhow::anyhow!("expected array in array_append"))?;
