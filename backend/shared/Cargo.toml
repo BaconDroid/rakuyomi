@@ -48,7 +48,7 @@ rustls = { version = "0.23", default-features = false, features = [
 ring = "0.17"
 webpki-roots = "1"
 semver = "1.0"
-zip = { version = "9.0.4", default-features = false, features = ["deflate", "bzip2"] }
+zip = { version = "9.0.5", default-features = false, features = ["deflate", "bzip2"] }
 serde = { version = "1.0.229", features = ["derive"] }
 tokio = { version = "1.53.3", features = ["full"] }
 wasmi.workspace = true
@@ -64,7 +64,7 @@ size = "0.6.0"
 walkdir = "2.5.0"
 regex = "1.13.1"
 schemars = { version = "1.2.3", features = ["url2"] }
-pared = { git = "https://github.com/hanatsumi/pared.git", branch = "feat/unwrap-or-clone" }
+pared = "0.4.0"
 sanitize-filename = "0.6.0"
 serde_json_lenient = "0.2.4"
 futures-util = "0.3.34"
