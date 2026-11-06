@@ -1,55 +1,32 @@
 name: Feature request
-description: Suggest an idea for rakuyomi
+description: Suggest a behaviour or an option the plugin should have
 title: "[Feature]: "
 labels: [enhancement]
 body:
-  - type: markdown
-    attributes:
-      value: |
-        Thanks for suggesting an idea! Tell us what you would like to see.
-
   - type: textarea
     id: problem
     attributes:
-      label: Problem
-      description: What problem are you trying to solve? Ex. I'm always frustrated when [...]
-      placeholder: I'm always frustrated when ...
+      label: What problem does this solve
+      description: The situation where the plugin gets in the way, rather than the implementation you have in mind.
     validations:
       required: true
 
   - type: textarea
-    id: solution
+    id: proposal
     attributes:
-      label: Proposed solution
-      description: A clear and concise description of what you want to happen.
-      placeholder: I would like ...
-    validations:
-      required: true
-
-  - type: textarea
-    id: alternatives
-    attributes:
-      label: Alternatives considered
-      description: Any alternative solutions or workarounds you've tried.
-      placeholder: I also tried ...
+      label: What you would like
+      description: The behaviour or setting you expect, and the screen it belongs to.
 
   - type: dropdown
-    id: area
+    id: scope
     attributes:
-      label: Area
-      description: Which part of rakuyomi would this affect?
-      multiple: true
+      label: Scope
       options:
-        - Reading / viewer
-        - Library
-        - Downloads
-        - Sources / extensions
+        - Library view
+        - Reader
+        - Sources and downloads
         - Settings
-        - Performance
+        - Tracking integrations
         - Other
-
-  - type: textarea
-    id: context
-    attributes:
-      label: Additional context
-      description: Add screenshots, mockups, or any other context here.
+    validations:
+      required: true
