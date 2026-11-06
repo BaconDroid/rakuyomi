@@ -69,6 +69,7 @@ Data directory: `$KOREARCHIVE_DIR/rakuyomi/` (Unix) or `/storage/emulated/0/kore
 
 ## Open follow-ups
 - Upstreaming the reading-status feature: see `NOTES-upstream-reading-status.md`.
+- Five `zip` advisories are accepted rather than fixed: see `SECURITY-dependencies.md`.
 
 ## Key Rules
 
