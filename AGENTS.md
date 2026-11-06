@@ -68,7 +68,7 @@ Versioning: `semantic-release` from commit messages.
 Data directory: `$KOREARCHIVE_DIR/rakuyomi/` (Unix) or `/storage/emulated/0/koreader/rakuyomi` (Android)
 
 ## Open follow-ups
-- Upstreaming the reading-status feature: see `NOTES-upstream-reading-status.md`.
+- Upstreaming the reading-status feature: tracked in issue #42.
 - Five `zip` advisories are accepted rather than fixed: see `SECURITY-dependencies.md`.
 
 ## Key Rules
