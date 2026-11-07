@@ -1,3 +1,11 @@
+## [1.45.2](https://github.com/BaconDroid/rakuyomi/compare/v1.45.1...v1.45.2) (2026-11-07)
+
+
+### Bug Fixes
+
+* **download:** open the EPUB output read-write before patching its ZIP comment ([a27af1d](https://github.com/BaconDroid/rakuyomi/commit/a27af1ddcc69fcf12844fb336ec7f79dccfc1491))
+* **download:** validate the ZIP end record before patching its comment ([2335267](https://github.com/BaconDroid/rakuyomi/commit/233526720f8989c6a0765870061483f6869cb8cb))
+
 ## [1.45.1](https://github.com/BaconDroid/rakuyomi/compare/v1.45.0...v1.45.1) (2026-11-06)
 
 
