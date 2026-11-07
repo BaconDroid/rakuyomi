@@ -45,8 +45,10 @@ files and update packages already uses the patched parser. The lockfile resolves
 
 ## What would change this
 
-If either crate gains a reader path this repository does not control, or starts
-using `extract`/`ZipStreamReader`, revisit. At that point the choices are to
-vendor the two crates with `zip` bumped (7.3 MB, plus the patch to replay on each
-upstream release), or to generate EPUB with `zip` directly and drop
-`epub-builder` (about 205 lines in `chapter_downloader.rs`).
+If either crate gains a reader path this repository does not control, starts
+using `extract`/`ZipStreamReader`, or enables `legacy-zip`, revisit. Replacing
+`epub-builder` with `zip` directly (about 205 lines in `chapter_downloader.rs`)
+removes one affected tree; it does not cover `dexvm`, which still needs an
+upgrade or patch if its APK reader reaches an affected path. The alternative is
+to vendor both crates with `zip` bumped (7.3 MB, plus the patch to replay on each
+upstream release).
