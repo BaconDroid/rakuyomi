@@ -112,7 +112,7 @@ export class KvDurableObject extends DurableObject {
       }
     } catch (e) {
       console.error(`KV durable object: ${op} failed`, e)
-      return json({ error: String(e) }, 500)
+      return json({ error: "Internal storage error" }, 500)
     }
   }
 

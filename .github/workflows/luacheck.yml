@@ -11,6 +11,9 @@ on:
       - 'frontend/**'
   workflow_call:
 
+permissions:
+  contents: read
+
 jobs:
   luacheck:
     runs-on: ubuntu-latest

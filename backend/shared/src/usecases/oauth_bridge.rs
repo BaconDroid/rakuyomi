@@ -3,6 +3,26 @@ use serde::{Deserialize, Serialize};
 
 use crate::tls::client_builder;
 
+/// Rejects cleartext bridge URLs unless the host is loopback.
+fn bridge_base_url(server_url: &str) -> anyhow::Result<reqwest::Url> {
+    let url = reqwest::Url::parse(server_url)
+        .with_context(|| format!("invalid OAuth bridge URL: {server_url}"))?;
+    let host = url
+        .host_str()
+        .unwrap_or_default()
+        .trim_start_matches('[')
+        .trim_end_matches(']');
+    let loopback = host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<std::net::IpAddr>()
+            .map(|ip| ip.is_loopback())
+            .unwrap_or(false);
+    if url.scheme() != "https" && !loopback {
+        anyhow::bail!("OAuth bridge URL must use https (http is only allowed on loopback)");
+    }
+    Ok(url)
+}
+
 /// The OAuth service type sent to the bridge server.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -81,7 +101,8 @@ pub async fn start_oauth_session(
     chat_id: Option<i64>,
     device_name: Option<String>,
 ) -> anyhow::Result<CreateSessionResponse> {
-    let url = format!("{}/api/oauth/session", server_url.trim_end_matches('/'));
+    let base = bridge_base_url(server_url)?;
+    let url = format!("{}/api/oauth/session", base.as_str().trim_end_matches('/'));
     let body = CreateSessionRequest {
         service,
         chat_id,
@@ -117,9 +138,10 @@ pub async fn poll_oauth_status(
     session_id: &str,
     api_token: Option<&str>,
 ) -> anyhow::Result<PollSessionResponse> {
+    let base = bridge_base_url(server_url)?;
     let url = format!(
         "{}/api/oauth/status/{}",
-        server_url.trim_end_matches('/'),
+        base.as_str().trim_end_matches('/'),
         session_id
     );
 
@@ -137,6 +159,8 @@ pub async fn poll_oauth_status(
         .context("failed to build HTTP client")?;
 
     let resp = client
+        // codeql[rust/cleartext-transmission]: bridge_base_url rejects
+        // cleartext for every non-loopback host.
         .get(&url)
         .send()
         .await
@@ -150,4 +174,30 @@ pub async fn poll_oauth_status(
         .with_context(|| "failed to parse OAuth status response")?;
 
     Ok(data)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::bridge_base_url;
+
+    #[test]
+    fn accepts_https_and_loopback_http() {
+        for url in [
+            "https://bot.example.com/",
+            "http://127.0.0.1:8787",
+            "http://localhost:8787",
+            "http://[::1]:8787",
+        ] {
+            assert!(
+                bridge_base_url(url).is_ok(),
+                "expected {url} to be accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_cleartext_remote_http() {
+        let err = bridge_base_url("http://bot.example.com/").unwrap_err();
+        assert!(err.to_string().contains("must use https"));
+    }
 }

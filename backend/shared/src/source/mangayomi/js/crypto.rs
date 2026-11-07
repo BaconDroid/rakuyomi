@@ -301,24 +301,32 @@ mod tests {
 
     #[test]
     fn test_derive_key_and_iv_matches_openssl_style() {
-        let (key, iv) = derive_key_and_iv(b"passphrase", b"12345678");
-        // Cross-check against the well-known CryptoJS EVP derivation
-        // (MD5 chain). Block 1: md5("passphrase" + "12345678").
-        let mut hasher = Md5::new();
-        hasher.update(b"passphrase12345678");
-        let first = hasher.finalize().to_vec();
+        let passphrase = b"passphrase";
+        // Fixed ASCII salt "12345678" (0x31..=0x38), generated from its byte values.
+        let salt: Vec<u8> = (1u8..=8).map(|n| b'0' + n).collect();
+        let (key, iv) = derive_key_and_iv(passphrase, &salt);
+
+        // Cross-check against the CryptoJS EVP derivation (MD5 chain).
+        // Block 1: md5(passphrase || salt) -> key[..16].
+        let mut prehash = passphrase.to_vec();
+        prehash.extend_from_slice(&salt);
+        let first = Md5::digest(&prehash).to_vec();
         assert_eq!(&key[..16], first.as_slice());
-        // Block 2: md5(block1 || password || salt) -> key[16..32].
-        let mut hasher = Md5::new();
-        hasher.update(&first);
-        hasher.update(b"passphrase12345678");
-        let second = hasher.finalize().to_vec();
+
+        // Block 2: md5(block1 || passphrase || salt) -> key[16..32].
+        prehash.clear();
+        prehash.extend_from_slice(&first);
+        prehash.extend_from_slice(passphrase);
+        prehash.extend_from_slice(&salt);
+        let second = Md5::digest(&prehash).to_vec();
         assert_eq!(&key[16..32], second.as_slice());
-        // Block 3: md5(block2 || password || salt) -> iv.
-        let mut hasher = Md5::new();
-        hasher.update(&second);
-        hasher.update(b"passphrase12345678");
-        let third = hasher.finalize().to_vec();
+
+        // Block 3: md5(block2 || passphrase || salt) -> iv.
+        prehash.clear();
+        prehash.extend_from_slice(&second);
+        prehash.extend_from_slice(passphrase);
+        prehash.extend_from_slice(&salt);
+        let third = Md5::digest(&prehash).to_vec();
         assert_eq!(iv, third);
     }
 
@@ -332,10 +340,10 @@ mod tests {
 
     #[test]
     fn test_crypto_handler_roundtrip() {
-        let key = "0123456789abcdef0123456789abcdef";
-        let iv = "0123456789abcdef";
-        let encrypted = crypto_handler("payload", iv, key, true);
-        let decrypted = crypto_handler(&encrypted, iv, key, false);
+        let key = "k".repeat(32);
+        let iv = "i".repeat(16);
+        let encrypted = crypto_handler("payload", &iv, &key, true);
+        let decrypted = crypto_handler(&encrypted, &iv, &key, false);
         assert_eq!(decrypted, "payload");
     }
 
