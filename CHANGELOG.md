@@ -1,3 +1,11 @@
+## [1.45.3](https://github.com/BaconDroid/rakuyomi/compare/v1.45.2...v1.45.3) (2026-11-07)
+
+
+### Bug Fixes
+
+* **security:** address CodeRabbit review findings ([3d860c9](https://github.com/BaconDroid/rakuyomi/commit/3d860c96457335d101df76eca0a9829fc13c6193))
+* **security:** resolve open code scanning alerts ([e80a09c](https://github.com/BaconDroid/rakuyomi/commit/e80a09ca1e25d4e9f0d4d28863fe02656c8abf0d))
+
 ## [1.45.2](https://github.com/BaconDroid/rakuyomi/compare/v1.45.1...v1.45.2) (2026-11-07)
 
 
