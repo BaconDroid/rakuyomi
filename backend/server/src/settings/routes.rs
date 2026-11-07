@@ -315,8 +315,8 @@ async fn poll_oauth_status(
                     }
                 };
                 match usecases::get_tracking_user_info(&mut settings, tracking_service).await {
-                    Ok(username) => {
-                        log::info!("Fetched username after OAuth: {:?}", username);
+                    Ok(_) => {
+                        log::info!("Fetched tracking username after OAuth");
                     }
                     Err(e) => {
                         log::warn!("Failed to fetch username after OAuth: {:#}", e);
