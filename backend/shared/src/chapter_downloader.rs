@@ -229,9 +229,21 @@ fn set_zip_comment(file: &mut std::fs::File, comment: &[u8]) -> anyhow::Result<(
     file.seek(std::io::SeekFrom::Start(scan_start))?;
     file.read_exact(&mut tail)?;
 
-    let eocd_offset = tail
-        .windows(EOCD_SIGNATURE.len())
-        .rposition(|window| window == EOCD_SIGNATURE)
+    let eocd_offset = (0..=tail.len() - EOCD_SIGNATURE.len())
+        .rev()
+        .find(|&position| {
+            if tail[position..position + EOCD_SIGNATURE.len()] != EOCD_SIGNATURE {
+                return false;
+            }
+            let candidate = scan_start + position as u64;
+            if candidate + EOCD_LEN > file_len {
+                return false;
+            }
+            let comment_len_offset = position + 20;
+            let comment_len =
+                u16::from_le_bytes([tail[comment_len_offset], tail[comment_len_offset + 1]]) as u64;
+            candidate + EOCD_LEN + comment_len == file_len
+        })
         .map(|position| scan_start + position as u64)
         .ok_or_else(|| anyhow!("not a ZIP archive: no end of central directory record"))?;
 
@@ -705,6 +717,7 @@ where
     tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
         let mut output = std::fs::OpenOptions::new()
             .create(true)
+            .read(true)
             .write(true)
             .truncate(true)
             .open(&temp_path)?;
