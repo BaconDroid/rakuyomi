@@ -206,6 +206,7 @@ fn zip_comment(chapter_id: &ChapterId) -> String {
 /// reads it back (`Shared:getOrigin`) to recognise the chapter exports it wrote.
 fn set_zip_comment(file: &mut std::fs::File, comment: &[u8]) -> anyhow::Result<()> {
     const EOCD_SIGNATURE: [u8; 4] = [b'P', b'K', 0x05, 0x06];
+    const CENTRAL_DIR_SIGNATURE: [u8; 4] = [b'P', b'K', 0x01, 0x02];
     const EOCD_LEN: u64 = 22;
     const MAX_COMMENT_LEN: usize = u16::MAX as usize;
     const MAX_SCAN_LEN: u64 = EOCD_LEN + MAX_COMMENT_LEN as u64;
@@ -229,22 +230,49 @@ fn set_zip_comment(file: &mut std::fs::File, comment: &[u8]) -> anyhow::Result<(
     file.seek(std::io::SeekFrom::Start(scan_start))?;
     file.read_exact(&mut tail)?;
 
-    let eocd_offset = (0..=tail.len() - EOCD_SIGNATURE.len())
-        .rev()
-        .find(|&position| {
-            if tail[position..position + EOCD_SIGNATURE.len()] != EOCD_SIGNATURE {
-                return false;
+    let mut eocd_offset = None;
+    for position in (0..=tail.len() - EOCD_SIGNATURE.len()).rev() {
+        if tail[position..position + EOCD_SIGNATURE.len()] != EOCD_SIGNATURE {
+            continue;
+        }
+        let candidate = scan_start + position as u64;
+        if candidate + EOCD_LEN > file_len {
+            continue;
+        }
+        let record = &tail[position..position + EOCD_LEN as usize];
+        let comment_len = u16::from_le_bytes([record[20], record[21]]) as u64;
+        if candidate + EOCD_LEN + comment_len != file_len {
+            continue;
+        }
+        let disk = u16::from_le_bytes([record[4], record[5]]);
+        let cd_disk = u16::from_le_bytes([record[6], record[7]]);
+        let entries_disk = u16::from_le_bytes([record[8], record[9]]);
+        let entries_total = u16::from_le_bytes([record[10], record[11]]);
+        if disk != cd_disk || entries_disk != entries_total {
+            continue;
+        }
+        let cd_size = u32::from_le_bytes([record[12], record[13], record[14], record[15]]) as u64;
+        let cd_offset = u32::from_le_bytes([record[16], record[17], record[18], record[19]]) as u64;
+        if entries_total != u16::MAX && cd_offset != u32::MAX as u64 && cd_size != u32::MAX as u64 {
+            if cd_offset.checked_add(cd_size) != Some(candidate) {
+                continue;
             }
-            let candidate = scan_start + position as u64;
-            if candidate + EOCD_LEN > file_len {
-                return false;
+            if entries_total != 0 {
+                if cd_offset + 4 > file_len {
+                    continue;
+                }
+                file.seek(std::io::SeekFrom::Start(cd_offset))?;
+                let mut signature = [0u8; 4];
+                file.read_exact(&mut signature)?;
+                if signature != CENTRAL_DIR_SIGNATURE {
+                    continue;
+                }
             }
-            let comment_len_offset = position + 20;
-            let comment_len =
-                u16::from_le_bytes([tail[comment_len_offset], tail[comment_len_offset + 1]]) as u64;
-            candidate + EOCD_LEN + comment_len == file_len
-        })
-        .map(|position| scan_start + position as u64)
+        }
+        eocd_offset = Some(candidate);
+        break;
+    }
+    let eocd_offset = eocd_offset
         .ok_or_else(|| anyhow!("not a ZIP archive: no end of central directory record"))?;
 
     file.seek(std::io::SeekFrom::Start(eocd_offset + 20))?;
