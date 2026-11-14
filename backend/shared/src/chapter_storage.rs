@@ -1,5 +1,5 @@
 use std::io::Cursor;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::{fs, future::Future};
@@ -52,6 +52,11 @@ impl ChapterStorage {
         fs::create_dir_all(&downloads_folder_path)
             .with_context(|| "while trying to ensure chapter storage exists")?;
 
+        // Remove leftover temporary downloads from a previously killed backend
+        // (e.g. OOM-killed during chapter download) so they do not leak space
+        // forever.
+        let _ = Self::cleanup_orphan_temp_files(&downloads_folder_path);
+
         let storage = Self {
             downloads_folder_path,
             ram_enabled,
@@ -65,6 +70,36 @@ impl ChapterStorage {
         );
 
         Ok(storage)
+    }
+
+    /// Remove orphan `downloads/.tmp*` files left behind when a download was
+    /// interrupted (e.g. backend OOM-killed). NamedTempFile creates files with a
+    /// `.tmpXXXXXX` prefix in the downloads folder, so we sweep for them.
+    fn cleanup_orphan_temp_files(downloads_folder_path: &Path) -> Result<()> {
+        use log::warn;
+
+        for entry in fs::read_dir(downloads_folder_path)? {
+            let entry = entry?;
+            let path = entry.path();
+            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                if name.starts_with(".tmp") && name.len() > 4 {
+                    if path.is_dir() {
+                        if let Err(e) = fs::remove_dir_all(&path) {
+                            warn!("Failed to remove orphan temp dir {}: {}", path.display(), e);
+                        }
+                    } else {
+                        if let Err(e) = fs::remove_file(&path) {
+                            warn!(
+                                "Failed to remove orphan temp file {}: {}",
+                                path.display(),
+                                e
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Switch to RAM-backed tmpfs storage.

@@ -72,17 +72,19 @@ end
 
 ---@param onStdout fun(contents: string):nil
 ---@param onStderr fun(contents: string):nil
-function SubprocessOutputCapturer:periodicallyPipeOutput(onStdout, onStderr)
+---@param onEof fun(stream_name: string):nil  -- called when a pipe reaches EOF (subprocess exited)
+function SubprocessOutputCapturer:periodicallyPipeOutput(onStdout, onStderr, onEof)
   UIManager:scheduleIn(0.5, function()
-    self:pipeOutput(onStdout, onStderr)
+    self:pipeOutput(onStdout, onStderr, onEof)
 
-    self:periodicallyPipeOutput(onStdout, onStderr)
+    self:periodicallyPipeOutput(onStdout, onStderr, onEof)
   end)
 end
 
 ---@param onStdout fun(contents: string):nil
 ---@param onStderr fun(contents: string):nil
-function SubprocessOutputCapturer:pipeOutput(onStdout, onStderr)
+---@param onEof fun(stream_name: string):nil  -- called when a pipe reaches EOF (subprocess exited)
+function SubprocessOutputCapturer:pipeOutput(onStdout, onStderr, onEof)
   local buffer = ffi.new("char[?]", 1024)
   local fds = ffi.new("struct pollfd[2]")
   fds[0].fd = self.stdout_pipe[0]
@@ -96,12 +98,16 @@ function SubprocessOutputCapturer:pipeOutput(onStdout, onStderr)
       local bytes_read = C.read(self.stdout_pipe[0], buffer, 1024)
       if bytes_read > 0 then
         onStdout(ffi.string(buffer, bytes_read))
+      elseif bytes_read == 0 and onEof then
+        onEof("stdout")
       end
     end
     if bit.band(fds[1].revents, C.POLLIN) ~= 0 then
       local bytes_read = C.read(self.stderr_pipe[0], buffer, 1024)
       if bytes_read > 0 then
         onStderr(ffi.string(buffer, bytes_read))
+      elseif bytes_read == 0 and onEof then
+        onEof("stderr")
       end
     end
   end

@@ -92,6 +92,29 @@ function Backend.requestJson(request)
   )
 
   if response.type == 'ERROR' then
+    -- A connection-level error means the backend process may have died
+    -- (e.g. OOM-killed). Detect it, log the real cause, and restart once
+    -- transparently instead of degrading into silent failures.
+    local msg = response.message or ""
+    local is_socket_error = msg:find("^connect%(%:)") ~= nil
+        or msg:find("^socket%(%:)") ~= nil
+
+    if is_socket_error and not request._backend_retried then
+      logger.warn("backend request failed (socket error), restarting backend:",
+        path_and_query, msg)
+      Backend.cleanup()
+      local ok = Backend.initialize()
+      if ok then
+        local retry_request = {}
+        for k, v in pairs(request) do
+          retry_request[k] = v
+        end
+        retry_request._backend_retried = true
+        return Backend.requestJson(retry_request)
+      end
+    end
+
+    logger.err("backend request failed", path_and_query, msg)
     return response
   end
 
@@ -223,7 +246,7 @@ end
 
 ---@return boolean
 function Backend.running()
-  return Backend.server ~= nil
+  return Backend.server ~= nil and Backend.server:isAlive()
 end
 
 --- @class SourceInformation

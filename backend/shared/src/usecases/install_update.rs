@@ -75,13 +75,32 @@ fn resolve_plugin_dir() -> anyhow::Result<PathBuf> {
 
 #[cfg(not(target_os = "android"))]
 fn resolve_plugin_dir() -> anyhow::Result<PathBuf> {
-    if let Some(path) = std::env::args().next().and_then(|arg| {
-        PathBuf::from(arg)
-            .parent()
-            .filter(|path| !path.as_os_str().is_empty())
-            .map(Path::to_path_buf)
-    }) {
-        return Ok(path);
+    // Prefer current_exe(): it always yields an absolute, trustworthy path to
+    // the running binary, so its parent is the plugin directory. argv[0] can be
+    // relative (e.g. "./server"), in which case its parent is "." and we must
+    // refuse to use it — otherwise cleanup_update_backup() would delete the
+    // current working directory.
+    if let Ok(current_exe) = std::env::current_exe() {
+        if let Some(parent) = current_exe.parent() {
+            if !parent.as_os_str().is_empty() {
+                return Ok(Path::to_path_buf(parent));
+            }
+        }
+    }
+
+    // Fallback: argv[0] parent, but refuse a canonical "." path.
+    if let Some(arg_path) = std::env::args().next().map(PathBuf::from) {
+        if let Some(parent) = arg_path.parent() {
+            if parent.as_os_str().is_empty() {
+                // No parent (e.g. just "server") — fall through to current_exe below.
+            } else if let Ok(canonical) = parent.canonicalize() {
+                if canonical.file_name().and_then(|n| n.to_str()) != Some(".") {
+                    return Ok(Path::to_path_buf(parent));
+                }
+            } else if parent.file_name().and_then(|n| n.to_str()) != Some(".") {
+                return Ok(Path::to_path_buf(parent));
+            }
+        }
     }
 
     let current_exe = std::env::current_exe().context("Could not get current executable")?;
