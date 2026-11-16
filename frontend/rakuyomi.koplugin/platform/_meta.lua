@@ -29,6 +29,12 @@ end
 function Server:getLogBuffer()
 end
 
+--- Whether the server process is still running. Optional: servers that cannot
+--- observe their process (e.g. Android) do not implement it.
+--- @return boolean
+function Server:isAlive()
+end
+
 --- Stops the server.
 function Server:stop()
 end

@@ -28,19 +28,38 @@ end
 
 local F_SETFL = 4
 local O_NONBLOCK = 0x4
+-- poll(2) always reports POLLHUP (never requested through `events`); 0x10 on
+-- both Linux and macOS.
+local POLLHUP = 0x10
 
 ---@class SubprocessOutputCapturer
 ---@diagnostic disable-next-line: undefined-doc-name
 ---@field stdout_pipe ffi.cdata*
 ---@diagnostic disable-next-line: undefined-doc-name
 ---@field stderr_pipe ffi.cdata*
+---@field stdoutEof boolean Whether the stdout pipe already reported EOF.
+---@field stderrEof boolean Whether the stderr pipe already reported EOF.
+---@field pollTask (fun():nil)|nil The pending scheduled poll, if any.
 local SubprocessOutputCapturer = {}
+
+--- Closes the read end of a pipe exactly once. The slot is set to -1 so a
+--- repeated call is a no-op and poll() ignores it.
+---@diagnostic disable-next-line: undefined-doc-name
+---@param pipe ffi.cdata*
+local function closeReadEnd(pipe)
+  if pipe[0] >= 0 then
+    C.close(pipe[0])
+    pipe[0] = -1
+  end
+end
 
 ---@return SubprocessOutputCapturer
 function SubprocessOutputCapturer:new()
   local obj = {
     stdout_pipe = ffi.new("int[2]"),
     stderr_pipe = ffi.new("int[2]"),
+    stdoutEof = false,
+    stderrEof = false,
   }
   setmetatable(obj, { __index = self })
 
@@ -74,40 +93,78 @@ end
 ---@param onStderr fun(contents: string):nil
 ---@param onEof fun(stream_name: string):nil  -- called when a pipe reaches EOF (subprocess exited)
 function SubprocessOutputCapturer:periodicallyPipeOutput(onStdout, onStderr, onEof)
-  UIManager:scheduleIn(0.5, function()
+  self:cancelPeriodicPipeOutput()
+
+  local task
+  task = function()
+    self.pollTask = nil
     self:pipeOutput(onStdout, onStderr, onEof)
 
-    self:periodicallyPipeOutput(onStdout, onStderr, onEof)
-  end)
+    -- Both pipes reached EOF: nothing more can ever be read, so stop polling.
+    if self.stdoutEof and self.stderrEof then
+      return
+    end
+    self.pollTask = task
+    UIManager:scheduleIn(0.5, task)
+  end
+
+  self.pollTask = task
+  UIManager:scheduleIn(0.5, task)
+end
+
+--- Cancels the pending poll scheduled by `periodicallyPipeOutput`, if any.
+--- Does not touch the pipe descriptors; see `closePipes`.
+function SubprocessOutputCapturer:cancelPeriodicPipeOutput()
+  if self.pollTask then
+    UIManager:unschedule(self.pollTask)
+    self.pollTask = nil
+  end
+end
+
+--- Closes any read descriptor that is still open. Safe to call repeatedly and
+--- after `pipeOutput` already closed a stream at EOF; later `pipeOutput` calls
+--- find nothing to poll.
+function SubprocessOutputCapturer:closePipes()
+  closeReadEnd(self.stdout_pipe)
+  closeReadEnd(self.stderr_pipe)
 end
 
 ---@param onStdout fun(contents: string):nil
 ---@param onStderr fun(contents: string):nil
----@param onEof fun(stream_name: string):nil  -- called when a pipe reaches EOF (subprocess exited)
+---@param onEof fun(stream_name: string):nil  -- called once per stream when its pipe reaches EOF (subprocess exited)
 function SubprocessOutputCapturer:pipeOutput(onStdout, onStderr, onEof)
   local buffer = ffi.new("char[?]", 1024)
   local fds = ffi.new("struct pollfd[2]")
-  fds[0].fd = self.stdout_pipe[0]
-  fds[0].events = C.POLLIN
-  fds[1].fd = self.stderr_pipe[0]
-  fds[1].events = C.POLLIN
+  local readableEvents = bit.bor(C.POLLIN, POLLHUP)
+  local streams = {
+    { name = "stdout", pipe = self.stdout_pipe, fd = self.stdout_pipe[0], onData = onStdout, eofField = "stdoutEof" },
+    { name = "stderr", pipe = self.stderr_pipe, fd = self.stderr_pipe[0], onData = onStderr, eofField = "stderrEof" },
+  }
 
-  local ret = C.poll(fds, 2, 0)
-  if ret > 0 then
-    if bit.band(fds[0].revents, C.POLLIN) ~= 0 then
-      local bytes_read = C.read(self.stdout_pipe[0], buffer, 1024)
+  for i, stream in ipairs(streams) do
+    -- poll() ignores negative descriptors, so a stream whose descriptor was
+    -- closed (at EOF or by closePipes) is no longer polled.
+    fds[i - 1].fd = stream.fd
+    fds[i - 1].events = C.POLLIN
+  end
+
+  if C.poll(fds, 2, 0) <= 0 then
+    return
+  end
+
+  for i, stream in ipairs(streams) do
+    -- Once the writer is gone and the pipe is drained the kernel reports
+    -- POLLHUP without POLLIN; reading then returns 0, which is the EOF signal.
+    if bit.band(fds[i - 1].revents, readableEvents) ~= 0 then
+      local bytes_read = C.read(stream.fd, buffer, 1024)
       if bytes_read > 0 then
-        onStdout(ffi.string(buffer, bytes_read))
-      elseif bytes_read == 0 and onEof then
-        onEof("stdout")
-      end
-    end
-    if bit.band(fds[1].revents, C.POLLIN) ~= 0 then
-      local bytes_read = C.read(self.stderr_pipe[0], buffer, 1024)
-      if bytes_read > 0 then
-        onStderr(ffi.string(buffer, bytes_read))
-      elseif bytes_read == 0 and onEof then
-        onEof("stderr")
+        stream.onData(ffi.string(buffer, bytes_read))
+      elseif bytes_read == 0 then
+        self[stream.eofField] = true
+        closeReadEnd(stream.pipe)
+        if onEof then
+          onEof(stream.name)
+        end
       end
     end
   end

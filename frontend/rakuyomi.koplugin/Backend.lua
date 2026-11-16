@@ -44,6 +44,7 @@ end
 --- @field body unknown? The request body to be sent. Must be encodable as JSON.
 --- @field query_params table<string, string|number|nil>? The query parameters to be sent on request.
 --- @field timeout number? The timeout used for this request. If unset, the default value for the platform will be used (usually 60 seconds).
+--- @field skip_recovery boolean? When true, a socket-level failure is returned as-is instead of restarting the backend. Used by startup probes, which fail until the child binds its socket and are retried by their own deadline loop.
 
 --- @class SuccessfulResponse<T>: { type: 'SUCCESS', body: T }
 --- @class ErrorResponse: { type: 'ERROR', status: number, message: string }
@@ -96,10 +97,10 @@ function Backend.requestJson(request)
     -- (e.g. OOM-killed). Detect it, log the real cause, and restart once
     -- transparently instead of degrading into silent failures.
     local msg = response.message or ""
-    local is_socket_error = msg:find("^connect%(%:)") ~= nil
-        or msg:find("^socket%(%:)") ~= nil
+    local is_socket_error = msg:find("^connect%(%):") ~= nil
+        or msg:find("^socket%(%):") ~= nil
 
-    if is_socket_error and not request._backend_retried then
+    if is_socket_error and not request._backend_retried and not request.skip_recovery then
       logger.warn("backend request failed (socket error), restarting backend:",
         path_and_query, msg)
       Backend.cleanup()
@@ -157,6 +158,7 @@ local function waitUntilHttpServerIsReady()
       return Backend.requestJson({
         path = '/health-check',
         timeout = 1,
+        skip_recovery = true,
       })
     end)
 
@@ -190,6 +192,10 @@ function Backend.initialize()
   if Backend.running() then
     return true, nil
   end
+
+  -- A handle left over from a dead backend must be stopped (reaping the child
+  -- and releasing its pipes) before it is replaced. No-op when there is none.
+  Backend.cleanup()
 
   Backend.server = Platform:startServer()
 
@@ -246,7 +252,18 @@ end
 
 ---@return boolean
 function Backend.running()
-  return Backend.server ~= nil and Backend.server:isAlive()
+  local server = Backend.server
+  if server == nil then
+    return false
+  end
+
+  -- Servers that cannot observe their process (e.g. Android) do not implement
+  -- isAlive(); having a handle is all we know about them.
+  if server.isAlive == nil then
+    return true
+  end
+
+  return server:isAlive()
 end
 
 --- @class SourceInformation
