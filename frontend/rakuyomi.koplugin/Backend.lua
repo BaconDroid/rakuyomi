@@ -49,6 +49,38 @@ end
 --- @class SuccessfulResponse<T>: { type: 'SUCCESS', body: T }
 --- @class ErrorResponse: { type: 'ERROR', status: number, message: string }
 
+--- State of the last `Backend.initialize()` call made through `Backend.getBackend()` or
+--- request recovery, exposed by `Backend.getInitialized()` and `Backend.getLogs()`.
+---@type boolean|nil, string|nil
+local backendInitialized, logs
+
+--- Whether this Lua state is a forked worker (see `Backend.markAsWorkerProcess`). A worker
+--- owns a copy of `Backend.server`, so replacing it cannot update the parent's state.
+local isWorkerProcess = false
+local backendRecoveryRequired = false
+
+function Backend.markAsWorkerProcess()
+  isWorkerProcess = true
+end
+
+function Backend.clearRecoveryRequest()
+  backendRecoveryRequired = false
+end
+
+function Backend.recoveryRequired()
+  return backendRecoveryRequired
+end
+
+--- Restarts the backend and records the outcome as the current initialization state.
+--- @return boolean success
+function Backend.restart()
+  Backend.cleanup()
+  local ok, init_logs = Backend.initialize()
+  backendInitialized, logs = ok, init_logs
+
+  return ok
+end
+
 --- Performs a HTTP request, using JSON to encode the request body and to decode the response body.
 --- @private
 --- @param request RequestParameters The parameters used for this request.
@@ -56,7 +88,25 @@ end
 --- @nodiscard
 --- @return SuccessfulResponse<T>|ErrorResponse # The parsed JSON response or nil, if there was an error.
 function Backend.requestJson(request)
-  assert(Backend.server ~= nil, "backend wasn't initialized!")
+  if Backend.server == nil then
+    if isWorkerProcess then
+      backendRecoveryRequired = true
+      return {
+        type = 'ERROR',
+        status = 0,
+        message = "backend isn't running",
+      }
+    end
+
+    if request.skip_recovery or not Backend.restart() then
+      return {
+        type = 'ERROR',
+        status = 0,
+        message = "backend isn't running",
+      }
+    end
+  end
+
   local url = require("socket.url")
 
   -- FIXME naming
@@ -101,11 +151,16 @@ function Backend.requestJson(request)
         or msg:find("^socket%(%):") ~= nil
 
     if is_socket_error and not request._backend_retried and not request.skip_recovery then
+      if isWorkerProcess then
+        logger.warn("backend request failed (socket error), requesting restart from parent:",
+          path_and_query, msg)
+        backendRecoveryRequired = true
+        return response
+      end
+
       logger.warn("backend request failed (socket error), restarting backend:",
         path_and_query, msg)
-      Backend.cleanup()
-      local ok = Backend.initialize()
-      if ok then
+      if Backend.restart() then
         local retry_request = {}
         for k, v in pairs(request) do
           retry_request[k] = v
@@ -115,7 +170,10 @@ function Backend.requestJson(request)
       end
     end
 
-    logger.err("backend request failed", path_and_query, msg)
+    -- Startup probes fail every second until the child binds its socket; keep
+    -- those at warning level instead of an error flood.
+    local log_error = request.skip_recovery and logger.warn or logger.err
+    log_error("backend request failed", path_and_query, msg)
     return response
   end
 
@@ -211,7 +269,6 @@ function Backend.initialize()
 end
 
 ---@return boolean, string|nil
-local backendInitialized, logs
 function Backend.getBackend()
   if backendInitialized and Backend.running() then return true, nil end
   backendInitialized, logs = Backend.initialize()

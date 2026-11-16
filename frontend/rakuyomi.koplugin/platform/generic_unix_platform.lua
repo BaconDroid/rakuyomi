@@ -371,6 +371,7 @@ function UnixServer:terminateProcess()
   if waitForExit(TERM_TIMEOUT_SECONDS) then
     logger.info("Subprocess finished after SIGTERM")
     unlinkSocket()
+    self:flushLogBuffer()
     return
   end
 
@@ -390,6 +391,7 @@ function UnixServer:terminateProcess()
   end
 
   unlinkSocket()
+  self:flushLogBuffer()
 end
 
 function UnixServer:startLogCapture()
@@ -399,8 +401,8 @@ function UnixServer:startLogCapture()
   end
 
   local onEof = function(stream_name)
-    logger.warn("Server output pipe closed (" .. stream_name .. "); backend likely exited")
-    self.dead = true
+    -- EOF alone does not prove the backend exited; isAlive() probes the process.
+    logger.warn("Server output pipe closed (" .. stream_name .. "); check the backend process")
   end
 
   self.outputCapturer:periodicallyPipeOutput(onOutput, onOutput, onEof)
@@ -413,8 +415,7 @@ function UnixServer:flushLogBuffer()
   end
 
   local onEof = function(stream_name)
-    logger.warn("Server output pipe closed (" .. stream_name .. "); backend likely exited")
-    self.dead = true
+    logger.warn("Server output pipe closed (" .. stream_name .. "); check the backend process")
   end
 
   self.outputCapturer:pipeOutput(onOutput, onOutput, onEof)
@@ -485,43 +486,54 @@ function GenericUnixPlatform:startServer()
   local actions = t_file_actions()
   must0("posix_spawn_file_actions_init", C.posix_spawn_file_actions_init(actions))
 
-  if disable_logging then
-    -- OS-level redirection: stdout and stderr go to /dev/null.
-    -- No pipes created, no SubprocessOutputCapturer, zero overhead.
-    must0("addopen stdout", C.posix_spawn_file_actions_addopen(actions, 1, "/dev/null", bit.bor(O_WRONLY, O_CREAT, O_TRUNC), 0))
-    must0("addopen stderr", C.posix_spawn_file_actions_addopen(actions, 2, "/dev/null", bit.bor(O_WRONLY, O_CREAT, O_TRUNC), 0))
-  else
-    must0("posix_spawn_file_actions_adddup2", C.posix_spawn_file_actions_adddup2(actions, capturer.stdout_pipe[1], 1))
-    must0("posix_spawn_file_actions_adddup2", C.posix_spawn_file_actions_adddup2(actions, capturer.stderr_pipe[1], 2))
+  local ok, pid_or_error = pcall(function()
+    if disable_logging then
+      -- OS-level redirection: stdout and stderr go to /dev/null.
+      -- No pipes created, no SubprocessOutputCapturer, zero overhead.
+      must0("addopen stdout", C.posix_spawn_file_actions_addopen(actions, 1, "/dev/null", bit.bor(O_WRONLY, O_CREAT, O_TRUNC), 0))
+      must0("addopen stderr", C.posix_spawn_file_actions_addopen(actions, 2, "/dev/null", bit.bor(O_WRONLY, O_CREAT, O_TRUNC), 0))
+    else
+      must0("posix_spawn_file_actions_adddup2", C.posix_spawn_file_actions_adddup2(actions, capturer.stdout_pipe[1], 1))
+      must0("posix_spawn_file_actions_adddup2", C.posix_spawn_file_actions_adddup2(actions, capturer.stderr_pipe[1], 2))
 
-    must0("posix_spawn_file_actions_addclose", C.posix_spawn_file_actions_addclose(actions, capturer.stdout_pipe[0]))
-    must0("posix_spawn_file_actions_addclose", C.posix_spawn_file_actions_addclose(actions, capturer.stderr_pipe[0]))
+      must0("posix_spawn_file_actions_addclose", C.posix_spawn_file_actions_addclose(actions, capturer.stdout_pipe[0]))
+      must0("posix_spawn_file_actions_addclose", C.posix_spawn_file_actions_addclose(actions, capturer.stderr_pipe[0]))
 
-    must0("posix_spawn_file_actions_addclose", C.posix_spawn_file_actions_addclose(actions, capturer.stdout_pipe[1]))
-    must0("posix_spawn_file_actions_addclose", C.posix_spawn_file_actions_addclose(actions, capturer.stderr_pipe[1]))
-  end
-
-  local old_dir = nil
-  if SERVER_COMMAND_WORKING_DIRECTORY ~= nil then
-    local buf = ffi.new("char[4096]")
-    if C.getcwd(buf, 4096) ~= nil then
-      old_dir = ffi.string(buf)
-      C.chdir(SERVER_COMMAND_WORKING_DIRECTORY)
+      must0("posix_spawn_file_actions_addclose", C.posix_spawn_file_actions_addclose(actions, capturer.stdout_pipe[1]))
+      must0("posix_spawn_file_actions_addclose", C.posix_spawn_file_actions_addclose(actions, capturer.stderr_pipe[1]))
     end
-  end
 
-  local pid_ptr = t_int_array()
-  local spawn_res = C.posix_spawn(pid_ptr, binaryPath, actions, nil, argv, C.environ)
+    local old_dir = nil
+    if SERVER_COMMAND_WORKING_DIRECTORY ~= nil then
+      local buf = ffi.new("char[4096]")
+      if C.getcwd(buf, 4096) ~= nil then
+        old_dir = ffi.string(buf)
+        C.chdir(SERVER_COMMAND_WORKING_DIRECTORY)
+      end
+    end
 
-  if old_dir ~= nil then
-    C.chdir(old_dir)
-  end
+    local pid_ptr = t_int_array()
+    local spawn_res = C.posix_spawn(pid_ptr, binaryPath, actions, nil, argv, C.environ)
+
+    if old_dir ~= nil then
+      C.chdir(old_dir)
+    end
+
+    must0("posix_spawn", spawn_res)
+    return pid_ptr[0]
+  end)
 
   C.posix_spawn_file_actions_destroy(actions)
 
+  if not ok then
+    if capturer then
+      capturer:cancelPeriodicPipeOutput()
+      capturer:closePipesAfterFailedSpawn()
+    end
+    error(pid_or_error, 0)
+  end
 
-  must0("posix_spawn", spawn_res)
-  local pid = pid_ptr[0]
+  local pid = pid_or_error
 
   if capturer then
     capturer:setupParentProcess()
