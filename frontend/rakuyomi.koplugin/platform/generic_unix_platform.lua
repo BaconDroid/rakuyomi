@@ -39,6 +39,22 @@ pcall(ffi.cdef, [[
   int connect(int sockfd, const void *addr, unsigned int addrlen);
 ]])
 
+-- `siginfo_t` is a 128-byte union; only `si_signo` (first field) is read here.
+ffi.cdef([[
+  typedef struct { int si_signo; int si_errno; int si_code; char _pad[116]; } rakuyomi_siginfo_t;
+]])
+pcall(ffi.cdef, [[
+  int waitid(int idtype, unsigned int id, void *infop, int options);
+]])
+
+local P_PID = 1
+local WNOHANG = 1
+local WEXITED = 4
+-- WNOWAIT leaves the child waitable, so the PID stays reserved until stop().
+local WNOWAIT = ffi.os == "OSX" and 0x20 or 0x01000000
+local ECHILD = 10
+local EPERM = 1
+
 local AF_UNIX = 1
 local SOCK_STREAM = 1
 local EINTR = 4
@@ -165,11 +181,12 @@ function UnixServer:new(pid, outputCapturer)
   return server
 end
 
---- Returns true if the backend subprocess is still alive.
+--- Returns true if the backend subprocess is still running.
 ---
---- Probes with `kill(pid, 0)`, which reports liveness without reaping the
---- child. Reaping is left to `stop()`, so the PID is never released for reuse
---- while we might still act on it.
+--- Probes with `waitid(WEXITED | WNOHANG | WNOWAIT)`, which reports an exited
+--- child without reaping it: a crashed backend lingers as a zombie, which
+--- `kill(pid, 0)` would still report as present, and reaping is left to
+--- `stop()` so the PID is never released for reuse while we might act on it.
 ---@return boolean
 function UnixServer:isAlive()
   if self.dead then
@@ -178,9 +195,29 @@ function UnixServer:isAlive()
   if self.pid == nil then
     return false
   end
-  -- A zombie still counts as present here; the EOF callback and stop() are
-  -- what mark the server dead definitively.
-  if C.kill(self.pid, 0) == 0 then
+
+  -- ffi.new zero-fills, so si_signo stays 0 unless a child state change is reported.
+  local info = ffi.new("rakuyomi_siginfo_t")
+  local result = C.waitid(P_PID, self.pid, ffi.cast("void *", info), WEXITED + WNOHANG + WNOWAIT)
+
+  if result == 0 then
+    if info.si_signo == 0 then
+      return true
+    end
+    self.dead = true
+    return false
+  end
+
+  if ffi.errno() == ECHILD then
+    -- Already reaped (or never our child): the process is gone.
+    self.dead = true
+    return false
+  end
+
+  -- Unexpected failure (e.g. EINTR): fall back to the plain presence probe.
+  -- EPERM means the process exists but cannot be signalled, so it is alive;
+  -- only ESRCH identifies an absent process.
+  if C.kill(self.pid, 0) == 0 or ffi.errno() == EPERM then
     return true
   end
   self.dead = true
@@ -276,7 +313,18 @@ function UnixServer:request(request)
   }
 end
 
+--- Stops the backend process, then releases the output capture: cancels the
+--- pending poll and closes any pipe descriptor still open.
 function UnixServer:stop()
+  self:terminateProcess()
+
+  if self.outputCapturer then
+    self.outputCapturer:cancelPeriodicPipeOutput()
+    self.outputCapturer:closePipes()
+  end
+end
+
+function UnixServer:terminateProcess()
   local SIGTERM = 15
   local SIGKILL = 9
   local ESRCH = 3

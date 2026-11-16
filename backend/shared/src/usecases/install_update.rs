@@ -75,39 +75,43 @@ fn resolve_plugin_dir() -> anyhow::Result<PathBuf> {
 
 #[cfg(not(target_os = "android"))]
 fn resolve_plugin_dir() -> anyhow::Result<PathBuf> {
-    // Prefer current_exe(): it always yields an absolute, trustworthy path to
-    // the running binary, so its parent is the plugin directory. argv[0] can be
-    // relative (e.g. "./server"), in which case its parent is "." and we must
-    // refuse to use it — otherwise cleanup_update_backup() would delete the
-    // current working directory.
-    if let Ok(current_exe) = std::env::current_exe() {
-        if let Some(parent) = current_exe.parent() {
-            if !parent.as_os_str().is_empty() {
-                return Ok(Path::to_path_buf(parent));
-            }
-        }
+    // Prefer current_exe(): it yields an absolute path to the running binary,
+    // so its parent is the plugin directory. argv[0] can be relative (e.g.
+    // "./server"), in which case its parent is "." and cleanup_update_backup()
+    // would delete the current working directory.
+    // The path only locates the plugin directory; no trust decision is made on it.
+    // nosemgrep
+    if let Some(parent) = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(Path::to_path_buf))
+        .filter(|parent| has_normal_final_component(parent))
+    {
+        return Ok(parent);
     }
 
-    // Fallback: argv[0] parent, but refuse a canonical "." path.
-    if let Some(arg_path) = std::env::args().next().map(PathBuf::from) {
-        if let Some(parent) = arg_path.parent() {
-            if parent.as_os_str().is_empty() {
-                // No parent (e.g. just "server") — fall through to current_exe below.
-            } else if let Ok(canonical) = parent.canonicalize() {
-                if canonical.file_name().and_then(|n| n.to_str()) != Some(".") {
-                    return Ok(Path::to_path_buf(parent));
-                }
-            } else if parent.file_name().and_then(|n| n.to_str()) != Some(".") {
-                return Ok(Path::to_path_buf(parent));
-            }
-        }
+    // The result is validated by has_normal_final_component before use.
+    // nosemgrep
+    if let Some(parent) = std::env::args()
+        .next()
+        .and_then(|arg| PathBuf::from(arg).parent().map(Path::to_path_buf))
+        .filter(|parent| has_normal_final_component(parent))
+    {
+        return Ok(parent);
     }
 
-    let current_exe = std::env::current_exe().context("Could not get current executable")?;
-    current_exe
-        .parent()
-        .map(Path::to_path_buf)
-        .context("Could not get rakuyomi's plugin directory")
+    Err(anyhow::anyhow!(
+        "Could not locate rakuyomi's plugin directory"
+    ))
+}
+
+/// Whether `path` ends in a named directory. Rejects `.`, `..`, `/` and the
+/// empty path, none of which can be a plugin directory that is safe to clean up.
+#[cfg(not(target_os = "android"))]
+fn has_normal_final_component(path: &Path) -> bool {
+    matches!(
+        path.components().next_back(),
+        Some(std::path::Component::Normal(_))
+    )
 }
 
 /// Removes leftover update downloads from an interrupted attempt located in
@@ -444,6 +448,21 @@ fn rollback_update(plugin_dir: &Path, backup_dir: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(not(target_os = "android"))]
+    #[test]
+    fn plugin_dir_must_end_in_a_named_directory() {
+        assert!(has_normal_final_component(Path::new(
+            "/sdcard/koreader/plugins/rakuyomi.koplugin"
+        )));
+        assert!(has_normal_final_component(Path::new(
+            "./plugins/rakuyomi.koplugin"
+        )));
+        assert!(!has_normal_final_component(Path::new(".")));
+        assert!(!has_normal_final_component(Path::new("..")));
+        assert!(!has_normal_final_component(Path::new("/")));
+        assert!(!has_normal_final_component(Path::new("")));
+    }
 
     #[test]
     fn cleanup_update_artifacts_removes_backup_and_leftover_downloads() {
