@@ -42,14 +42,10 @@ local POLLHUP = 0x10
 ---@field pollTask (fun():nil)|nil The pending scheduled poll, if any.
 local SubprocessOutputCapturer = {}
 
---- Closes the read end of a pipe exactly once. The slot is set to -1 so a
---- repeated call is a no-op and poll() ignores it.
----@diagnostic disable-next-line: undefined-doc-name
----@param pipe ffi.cdata*
-local function closeReadEnd(pipe)
-  if pipe[0] >= 0 then
-    C.close(pipe[0])
-    pipe[0] = -1
+local function closeFd(pipe, index)
+  if pipe[index] >= 0 then
+    C.close(pipe[index])
+    pipe[index] = -1
   end
 end
 
@@ -125,8 +121,17 @@ end
 --- after `pipeOutput` already closed a stream at EOF; later `pipeOutput` calls
 --- find nothing to poll.
 function SubprocessOutputCapturer:closePipes()
-  closeReadEnd(self.stdout_pipe)
-  closeReadEnd(self.stderr_pipe)
+  closeFd(self.stdout_pipe, 0)
+  closeFd(self.stderr_pipe, 0)
+end
+
+-- `setupParentProcess` never runs on this path, so both pipe ends are closed
+-- here or the write ends leak across failed spawn attempts.
+function SubprocessOutputCapturer:closePipesAfterFailedSpawn()
+  closeFd(self.stdout_pipe, 0)
+  closeFd(self.stderr_pipe, 0)
+  closeFd(self.stdout_pipe, 1)
+  closeFd(self.stderr_pipe, 1)
 end
 
 ---@param onStdout fun(contents: string):nil
@@ -161,7 +166,7 @@ function SubprocessOutputCapturer:pipeOutput(onStdout, onStderr, onEof)
         stream.onData(ffi.string(buffer, bytes_read))
       elseif bytes_read == 0 then
         self[stream.eofField] = true
-        closeReadEnd(stream.pipe)
+        closeFd(stream.pipe, 0)
         if onEof then
           onEof(stream.name)
         end

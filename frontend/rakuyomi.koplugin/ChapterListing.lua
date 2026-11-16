@@ -868,9 +868,19 @@ function ChapterListing:downloadChapter(chapter, download_job, callback, retried
 
     local response, cancelled
     if show_progress then
-      response, cancelled = LoadingDialog:showAndRunWithProgress(message, runnable, onCancel, onConfirmCancel)
+      response, cancelled = LoadingDialog:showAndRunWithProgress(
+        message, runnable, onCancel, onConfirmCancel,
+        function()
+          download_job:resetForBackendRecovery()
+        end
+      )
     else
-      response, cancelled = LoadingDialog:showAndRun(message, runnable, onCancel, onConfirmCancel)
+      response, cancelled = LoadingDialog:showAndRun(
+        message, runnable, onCancel, onConfirmCancel,
+        function()
+          download_job:resetForBackendRecovery()
+        end
+      )
     end
 
     if cancelled or response == nil then
