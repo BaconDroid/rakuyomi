@@ -845,9 +845,9 @@ function ChapterListing:downloadChapter(chapter, download_job, callback, retried
           return download_job:runUntilCompletion(onProgress)
         end,
         function()
-          if download_job.started then
-            download_job:requestCancellation()
-          end
+          -- Always cancel the known job: after a recovery the parent may hold
+          -- the pre-restart handle, and a stale id fails harmlessly.
+          download_job:requestCancellation()
 
           local cancelledMessage = InfoMessage:new {
             text = _("Download cancelled."),
@@ -871,14 +871,14 @@ function ChapterListing:downloadChapter(chapter, download_job, callback, retried
       response, cancelled = LoadingDialog:showAndRunWithProgress(
         message, runnable, onCancel, onConfirmCancel,
         function()
-          download_job:resetForBackendRecovery()
+          download_job:reset_for_backend_recovery()
         end
       )
     else
       response, cancelled = LoadingDialog:showAndRun(
         message, runnable, onCancel, onConfirmCancel,
         function()
-          download_job:resetForBackendRecovery()
+          download_job:reset_for_backend_recovery()
         end
       )
     end

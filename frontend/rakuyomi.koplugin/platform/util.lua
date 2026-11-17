@@ -42,7 +42,7 @@ local POLLHUP = 0x10
 ---@field pollTask (fun():nil)|nil The pending scheduled poll, if any.
 local SubprocessOutputCapturer = {}
 
-local function closeFd(pipe, index)
+local function close_fd(pipe, index)
   if pipe[index] >= 0 then
     C.close(pipe[index])
     pipe[index] = -1
@@ -89,7 +89,7 @@ end
 ---@param onStderr fun(contents: string):nil
 ---@param onEof fun(stream_name: string):nil  -- called when a pipe reaches EOF (subprocess exited)
 function SubprocessOutputCapturer:periodicallyPipeOutput(onStdout, onStderr, onEof)
-  self:cancelPeriodicPipeOutput()
+  self:cancel_periodic_pipe_output()
 
   local task
   task = function()
@@ -109,8 +109,9 @@ function SubprocessOutputCapturer:periodicallyPipeOutput(onStdout, onStderr, onE
 end
 
 --- Cancels the pending poll scheduled by `periodicallyPipeOutput`, if any.
---- Does not touch the pipe descriptors; see `closePipes`.
-function SubprocessOutputCapturer:cancelPeriodicPipeOutput()
+--- Does not touch the pipe descriptors; see `close_pipes`.
+---@return nil
+function SubprocessOutputCapturer:cancel_periodic_pipe_output()
   if self.pollTask then
     UIManager:unschedule(self.pollTask)
     self.pollTask = nil
@@ -120,27 +121,31 @@ end
 --- Closes any read descriptor that is still open. Safe to call repeatedly and
 --- after `pipeOutput` already closed a stream at EOF; later `pipeOutput` calls
 --- find nothing to poll.
-function SubprocessOutputCapturer:closePipes()
-  closeFd(self.stdout_pipe, 0)
-  closeFd(self.stderr_pipe, 0)
+---@return nil
+function SubprocessOutputCapturer:close_pipes()
+  close_fd(self.stdout_pipe, 0)
+  close_fd(self.stderr_pipe, 0)
 end
 
 -- `setupParentProcess` never runs on this path, so both pipe ends are closed
 -- here or the write ends leak across failed spawn attempts.
-function SubprocessOutputCapturer:closePipesAfterFailedSpawn()
-  closeFd(self.stdout_pipe, 0)
-  closeFd(self.stderr_pipe, 0)
-  closeFd(self.stdout_pipe, 1)
-  closeFd(self.stderr_pipe, 1)
+---@return nil
+function SubprocessOutputCapturer:close_pipes_after_failed_spawn()
+  close_fd(self.stdout_pipe, 0)
+  close_fd(self.stderr_pipe, 0)
+  close_fd(self.stdout_pipe, 1)
+  close_fd(self.stderr_pipe, 1)
 end
 
 ---@param onStdout fun(contents: string):nil
 ---@param onStderr fun(contents: string):nil
 ---@param onEof fun(stream_name: string):nil  -- called once per stream when its pipe reaches EOF (subprocess exited)
+---@return number bytes_read Total bytes delivered to the callbacks.
 function SubprocessOutputCapturer:pipeOutput(onStdout, onStderr, onEof)
   local buffer = ffi.new("char[?]", 1024)
   local fds = ffi.new("struct pollfd[2]")
   local readableEvents = bit.bor(C.POLLIN, POLLHUP)
+  local total_read = 0
   local streams = {
     { name = "stdout", pipe = self.stdout_pipe, fd = self.stdout_pipe[0], onData = onStdout, eofField = "stdoutEof" },
     { name = "stderr", pipe = self.stderr_pipe, fd = self.stderr_pipe[0], onData = onStderr, eofField = "stderrEof" },
@@ -148,13 +153,13 @@ function SubprocessOutputCapturer:pipeOutput(onStdout, onStderr, onEof)
 
   for i, stream in ipairs(streams) do
     -- poll() ignores negative descriptors, so a stream whose descriptor was
-    -- closed (at EOF or by closePipes) is no longer polled.
+    -- closed (at EOF or by close_pipes) is no longer polled.
     fds[i - 1].fd = stream.fd
     fds[i - 1].events = C.POLLIN
   end
 
   if C.poll(fds, 2, 0) <= 0 then
-    return
+    return 0
   end
 
   for i, stream in ipairs(streams) do
@@ -163,16 +168,19 @@ function SubprocessOutputCapturer:pipeOutput(onStdout, onStderr, onEof)
     if bit.band(fds[i - 1].revents, readableEvents) ~= 0 then
       local bytes_read = C.read(stream.fd, buffer, 1024)
       if bytes_read > 0 then
+        total_read = total_read + bytes_read
         stream.onData(ffi.string(buffer, bytes_read))
       elseif bytes_read == 0 then
         self[stream.eofField] = true
-        closeFd(stream.pipe, 0)
+        close_fd(stream.pipe, 0)
         if onEof then
           onEof(stream.name)
         end
       end
     end
   end
+
+  return total_read
 end
 
 util.SubprocessOutputCapturer = SubprocessOutputCapturer

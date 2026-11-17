@@ -54,21 +54,42 @@ end
 ---@type boolean|nil, string|nil
 local backendInitialized, logs
 
---- Whether this Lua state is a forked worker (see `Backend.markAsWorkerProcess`). A worker
+--- Whether this Lua state is a forked worker (see `Backend.mark_as_worker_process`). A worker
 --- owns a copy of `Backend.server`, so replacing it cannot update the parent's state.
-local isWorkerProcess = false
-local backendRecoveryRequired = false
+local is_worker_process = false
+local backend_recovery_required = false
+--- Whether the parent may rerun the failed task after a restart. A mutation
+--- that may have committed must not be replayed, but the backend still has to
+--- be restarted for later requests.
+local backend_replay_allowed = true
+--- Set when a stop attempt could not reap its child; the backend must not be
+--- reported as running, and no replacement may start beside it.
+local backend_stop_incomplete = false
 
-function Backend.markAsWorkerProcess()
-  isWorkerProcess = true
+--- Mark this Lua state as a forked worker so a lost backend is reported for
+--- the parent process to recover.
+---@return nil
+function Backend.mark_as_worker_process()
+  is_worker_process = true
 end
 
-function Backend.clearRecoveryRequest()
-  backendRecoveryRequired = false
+--- Clear the worker recovery request before a new subprocess task starts.
+---@return nil
+function Backend.clear_recovery_request()
+  backend_recovery_required = false
+  backend_replay_allowed = true
 end
 
-function Backend.recoveryRequired()
-  return backendRecoveryRequired
+--- Whether this worker lost the backend and the parent must restart it.
+---@return boolean
+function Backend.recovery_required()
+  return backend_recovery_required
+end
+
+--- Whether the parent may rerun the task after restarting the backend.
+---@return boolean
+function Backend.replay_allowed()
+  return backend_replay_allowed
 end
 
 --- Restarts the backend and records the outcome as the current initialization state.
@@ -84,6 +105,19 @@ function Backend.restart()
   return ok
 end
 
+--- Whether a failed request may be sent again after a backend restart.
+--- Mutating methods are not replayed unless the caller opts in, because the
+--- backend may have committed the change before the response was lost.
+---@param request RequestParameters
+---@return boolean
+local function is_request_replayable(request)
+  if request.replay_safe ~= nil then
+    return request.replay_safe
+  end
+  local method = request.method or "GET"
+  return method == "GET" or method == "HEAD" or method == "PUT" or method == "DELETE"
+end
+
 --- Performs a HTTP request, using JSON to encode the request body and to decode the response body.
 --- @private
 --- @param request RequestParameters The parameters used for this request.
@@ -92,8 +126,8 @@ end
 --- @return SuccessfulResponse<T>|ErrorResponse # The parsed JSON response or nil, if there was an error.
 function Backend.requestJson(request)
   if Backend.server == nil then
-    if isWorkerProcess then
-      backendRecoveryRequired = true
+    if is_worker_process then
+      backend_recovery_required = true
       return {
         type = 'ERROR',
         status = 0,
@@ -159,22 +193,28 @@ function Backend.requestJson(request)
         or msg:find("^socket%(%):") ~= nil
         or msg:find("^write:") ~= nil
         or msg == "empty response from server"
+        or msg == "malformed HTTP response"
         or msg:find("Connection reset by peer") ~= nil
         or msg == "connection refused"
         or msg == "Connection refused"
     )
 
     if is_socket_error and not request._backend_retried and not request.skip_recovery then
-      if isWorkerProcess then
+      local replay_allowed = is_request_replayable(request)
+
+      if is_worker_process then
         logger.warn("backend request failed (socket error), requesting restart from parent:",
           path_and_query, msg)
-        backendRecoveryRequired = true
+        -- The backend must be restarted even when this request cannot be
+        -- replayed, or every later request would keep failing.
+        backend_recovery_required = true
+        backend_replay_allowed = replay_allowed
         return response
       end
 
       logger.warn("backend request failed (socket error), restarting backend:",
         path_and_query, msg)
-      if Backend.restart() then
+      if Backend.restart() and replay_allowed then
         local retry_request = {}
         for k, v in pairs(request) do
           retry_request[k] = v
@@ -197,6 +237,30 @@ function Backend.requestJson(request)
   -- KOReader.
   local parsed_body, err = rapidjson.decode(response.body)
   if err then
+    -- A truncated body means the backend may have died mid-response; only the
+    -- parent can probe the process, so a worker always defers to it.
+    if not request.skip_recovery and not request._backend_retried then
+      local replay_allowed = is_request_replayable(request)
+      if is_worker_process then
+        backend_recovery_required = true
+        backend_replay_allowed = replay_allowed
+        return {
+          type = 'ERROR',
+          status = response.status,
+          message = tostring(response.body),
+        }
+      end
+
+      if not Backend.running() and Backend.restart() and replay_allowed then
+        local retry_request = {}
+        for k, v in pairs(request) do
+          retry_request[k] = v
+        end
+        retry_request._backend_retried = true
+        return Backend.requestJson(retry_request)
+      end
+    end
+
     logger.err("Request returned a non-JSON body with status code", response.status, "and body",
       response.body)
 
@@ -261,20 +325,33 @@ end
 ---@return boolean success Whether the backend was initialized successfully.
 ---@return string|nil logs On error, the last logs written by the server.
 function Backend.initialize()
+  if backend_stop_incomplete then
+    -- The retained child may have exited since the failed stop; collect it
+    -- before refusing, so a later attempt is not blocked forever.
+    Backend.cleanup()
+    if backend_stop_incomplete then
+      return false, "previous backend process is still shutting down"
+    end
+  end
+
   if Backend.running() then
     return true, nil
   end
 
-  -- A handle left over from a dead backend must be stopped (reaping the child
-  -- and releasing its pipes) before it is replaced. No-op when there is none.
   Backend.cleanup()
+  if Backend.server ~= nil then
+    return false, "previous backend process is still shutting down"
+  end
 
   Backend.server = Platform:startServer()
 
   if not waitUntilHttpServerIsReady() then
     local logBuffer = Backend.server:getLogBuffer()
-    Backend.server:stop()
-    Backend.server = nil
+    if Backend.server:stop() ~= false then
+      Backend.server = nil
+    else
+      backend_stop_incomplete = true
+    end
 
     return false, table.concat(logBuffer, "\n")
   end
@@ -323,18 +400,23 @@ end
 
 ---@return boolean
 function Backend.running()
+  if backend_stop_incomplete then
+    -- A retained child that could not be reaped is not a usable backend.
+    return false
+  end
+
   local server = Backend.server
   if server == nil then
     return false
   end
 
   -- Servers that cannot observe their process (e.g. Android) do not implement
-  -- isAlive(); having a handle is all we know about them.
-  if server.isAlive == nil then
+  -- is_alive(); having a handle is all we know about them.
+  if server.is_alive == nil then
     return true
   end
 
-  return server:isAlive()
+  return server:is_alive()
 end
 
 --- @class SourceInformation
@@ -1230,9 +1312,14 @@ end
 
 function Backend.cleanup()
   if Backend.server ~= nil then
-    Backend.server:stop()
-    Backend.server = nil
-    backendInitialized, logs = nil, nil
+    -- Only an explicit false keeps the handle; nil means unreportable.
+    if Backend.server:stop() ~= false then
+      Backend.server = nil
+      backendInitialized, logs = nil, nil
+      backend_stop_incomplete = false
+    else
+      backend_stop_incomplete = true
+    end
   end
 end
 

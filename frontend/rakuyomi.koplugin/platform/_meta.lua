@@ -32,9 +32,11 @@ end
 --- Whether the server process is still running. Optional: servers that cannot
 --- observe their process (e.g. Android) do not implement it.
 --- @return boolean
-function Server:isAlive()
+function Server:is_alive()
 end
 
 --- Stops the server.
+--- @return boolean|nil success False when the child could not be reaped; nil when
+--- the implementation cannot report it.
 function Server:stop()
 end

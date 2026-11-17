@@ -63,6 +63,10 @@ end
 
 --- @return boolean ok Whether the request completed successfully.
 function Job:requestCancellation()
+  if self.job_id == nil then
+    return false
+  end
+
   local response = Backend.requestJobCancellation(self.job_id)
   if response.type == 'ERROR' then
     return false
