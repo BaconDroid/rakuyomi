@@ -52,15 +52,20 @@ impl ChapterStorage {
         fs::create_dir_all(&downloads_folder_path)
             .with_context(|| "while trying to ensure chapter storage exists")?;
 
-        // Remove leftover temporary downloads from a previously killed backend
-        // (e.g. OOM-killed during chapter download) so they do not leak space
-        // forever.
-        if let Err(err) = Self::cleanup_orphan_temp_files(&downloads_folder_path) {
-            log::warn!(
-                "Failed to sweep orphan temporary downloads in {}: {}",
-                downloads_folder_path.display(),
-                err
-            );
+        // Sweep leftovers from a killed backend, including the tmpfs sibling
+        // used by RAM-backed downloads.
+        let mut folders = vec![downloads_folder_path.clone()];
+        if let Some(tmpfs) = tmpfs_sibling(&downloads_folder_path) {
+            folders.push(tmpfs);
+        }
+        for folder in folders {
+            if let Err(err) = Self::cleanup_orphan_temp_files(&folder) {
+                log::warn!(
+                    "Failed to sweep orphan temporary downloads in {}: {}",
+                    folder.display(),
+                    err
+                );
+            }
         }
 
         let storage = Self {
@@ -88,7 +93,17 @@ impl ChapterStorage {
 
         for entry in fs::read_dir(downloads_folder_path)? {
             let entry = entry?;
-            let is_regular_file = entry.file_type().is_ok_and(|file_type| file_type.is_file());
+            let is_regular_file = match entry.file_type() {
+                Ok(file_type) => file_type.is_file(),
+                Err(err) => {
+                    warn!(
+                        "Failed to inspect {} while sweeping orphans: {}",
+                        entry.path().display(),
+                        err
+                    );
+                    false
+                }
+            };
             let is_temp_name = entry
                 .file_name()
                 .to_str()
@@ -641,6 +656,16 @@ impl ChapterStorage {
         fs::create_dir_all(&path)
             .with_context(|| "while trying to ensure chapter storage exists")?;
 
+        // Orphans in the previous directory would never be swept again once it
+        // is no longer configured.
+        if let Err(err) = Self::cleanup_orphan_temp_files(&self.downloads_folder_path) {
+            log::warn!(
+                "Failed to sweep orphan temporary downloads in {}: {}",
+                self.downloads_folder_path.display(),
+                err
+            );
+        }
+
         self.downloads_folder_path = path;
 
         Ok(())
@@ -788,6 +813,14 @@ fn is_tempfile_generated_name(name: &str) -> bool {
     name.strip_prefix(".tmp").is_some_and(|suffix| {
         suffix.len() == 6 && suffix.bytes().all(|b| b.is_ascii_alphanumeric())
     })
+}
+
+/// Sibling directory holding RAM-backed downloads, when it exists.
+fn tmpfs_sibling(downloads_folder_path: &Path) -> Option<PathBuf> {
+    downloads_folder_path
+        .parent()
+        .map(|parent| parent.join("tmpfs"))
+        .filter(|path| path.is_dir())
 }
 
 #[cfg(test)]

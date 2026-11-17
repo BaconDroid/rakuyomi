@@ -17,6 +17,8 @@ local SERVER_COMMAND_OVERRIDE = os.getenv('RAKUYOMI_SERVER_COMMAND_OVERRIDE')
 
 local SOCKET_PATH = '/tmp/rakuyomi.sock'
 
+local MAX_FLUSH_READS = 64
+
 ffi.cdef([[
   char *getcwd(char *buf, size_t size);
   extern char **environ;
@@ -28,6 +30,10 @@ ffi.cdef([[
   int posix_spawn_file_actions_addclose(posix_spawn_file_actions_t *actions, int fd);
   int posix_spawn_file_actions_addopen(posix_spawn_file_actions_t *actions, int fd, const char *path, int oflag, int mode);
   int posix_spawn_file_actions_destroy(posix_spawn_file_actions_t *actions);
+]])
+
+pcall(ffi.cdef, [[
+  int getpid(void);
 ]])
 
 pcall(ffi.cdef, [[
@@ -162,6 +168,7 @@ end
 ---@field private disable_logging boolean
 ---@field private dead boolean
 ---@field private reaped boolean
+---@field private owner_pid number
 local UnixServer = {}
 
 function UnixServer:new(pid, outputCapturer)
@@ -175,12 +182,36 @@ function UnixServer:new(pid, outputCapturer)
     disable_logging = disable_logging,
     dead = false,
     reaped = false,
+    owner_pid = C.getpid(),
   }
   setmetatable(server, { __index = UnixServer })
 
   server:startLogCapture()
 
   return server
+end
+
+--- Probe whether `pid` still exists with `kill(pid, 0)`.
+---
+--- `EPERM` means the process exists but cannot be signalled, so it counts as
+--- alive. `EINTR` is transient, so the caller keeps its previous state.
+---@param pid number
+---@param previous_alive boolean Liveness to keep when the probe is interrupted.
+---@return boolean alive
+local function probe_process_alive(pid, previous_alive)
+  if C.kill(pid, 0) == 0 then
+    return true
+  end
+
+  local err = ffi.errno()
+  if err == EPERM then
+    return true
+  end
+  if err == EINTR then
+    return previous_alive
+  end
+
+  return false
 end
 
 --- Returns true if the backend subprocess is still running.
@@ -190,11 +221,8 @@ end
 --- `kill(pid, 0)` would still report as present, and reaping is left to
 --- `stop()` so the PID is never released for reuse while we might act on it.
 ---@return boolean
-function UnixServer:isAlive()
-  if self.dead then
-    return false
-  end
-  if self.pid == nil then
+function UnixServer:is_alive()
+  if self.dead or self.pid == nil then
     return false
   end
 
@@ -203,44 +231,37 @@ function UnixServer:isAlive()
   local result = C.waitid(P_PID, self.pid, ffi.cast("void *", info), WEXITED + WNOHANG + WNOWAIT)
 
   if result == 0 then
-    if info.si_signo == 0 then
-      return true
+    if info.si_signo ~= 0 then
+      self.dead = true
+      return false
     end
-    self.dead = true
-    return false
+    return true
   end
 
   local wait_errno = ffi.errno()
+  if wait_errno == EINTR then
+    return probe_process_alive(self.pid, true)
+  end
+
   if wait_errno == ECHILD then
+    -- Only the process that spawned the child can reap it. A forked worker is
+    -- not the child's parent, so ECHILD there says nothing about liveness.
+    if self.owner_pid ~= C.getpid() then
+      return probe_process_alive(self.pid, true)
+    end
     self.dead = true
     self.reaped = true
     return false
   end
 
-  if wait_errno == EINTR then
-    return not self.dead
-  end
-
-  if C.kill(self.pid, 0) == 0 then
+  if probe_process_alive(self.pid, true) then
     return true
-  end
-
-  local kill_errno = ffi.errno()
-  if kill_errno == EPERM then
-    return true
-  end
-  if kill_errno == EINTR then
-    return not self.dead
   end
 
   self.dead = true
   return false
 end
 
----@return boolean dead Whether the backend was already known dead.
-function UnixServer:isDead()
-  return self.dead == true
-end
 
 function UnixServer:getLogBuffer()
   self:flushLogBuffer()
@@ -328,16 +349,20 @@ end
 
 --- Stops the backend process, then releases the output capture: cancels the
 --- pending poll and closes any pipe descriptor still open.
+---@return boolean success Whether the child exited before the shutdown deadline.
 function UnixServer:stop()
-  self:terminateProcess()
+  local terminated = self:terminate_process()
 
   if self.outputCapturer then
-    self.outputCapturer:cancelPeriodicPipeOutput()
-    self.outputCapturer:closePipes()
+    self.outputCapturer:cancel_periodic_pipe_output()
+    self.outputCapturer:close_pipes()
   end
+
+  return terminated
 end
 
-function UnixServer:terminateProcess()
+---@return boolean success Whether the child exited before the shutdown deadline.
+function UnixServer:terminate_process()
   local SIGTERM = 15
   local SIGKILL = 9
   local ESRCH = 3
@@ -375,7 +400,7 @@ function UnixServer:terminateProcess()
   if self.reaped then
     unlinkSocket()
     self:flushLogBuffer()
-    return
+    return true
   end
 
   logger.info("Terminating subprocess with PID " .. self.pid)
@@ -392,7 +417,7 @@ function UnixServer:terminateProcess()
     self.reaped = true
     unlinkSocket()
     self:flushLogBuffer()
-    return
+    return true
   end
 
   logger.warn("Subprocess did not exit after SIGTERM; sending SIGKILL to PID " .. self.pid)
@@ -408,11 +433,15 @@ function UnixServer:terminateProcess()
     logger.info("Subprocess finished after SIGKILL")
     self.reaped = true
   else
+    -- Child may still be alive: keep handle and socket, start no replacement.
     logger.err("Subprocess could not be reaped before shutdown deadline:", self.pid)
+    self:flushLogBuffer()
+    return false
   end
 
   unlinkSocket()
   self:flushLogBuffer()
+  return true
 end
 
 function UnixServer:startLogCapture()
@@ -422,7 +451,7 @@ function UnixServer:startLogCapture()
   end
 
   local onEof = function(stream_name)
-    -- EOF alone does not prove the backend exited; isAlive() probes the process.
+    -- EOF alone does not prove the backend exited; is_alive() probes the process.
     logger.warn("Server output pipe closed (" .. stream_name .. "); check the backend process")
   end
 
@@ -439,7 +468,11 @@ function UnixServer:flushLogBuffer()
     logger.warn("Server output pipe closed (" .. stream_name .. "); check the backend process")
   end
 
-  self.outputCapturer:pipeOutput(onOutput, onOutput, onEof)
+  for _ = 1, MAX_FLUSH_READS do
+    if self.outputCapturer:pipeOutput(onOutput, onOutput, onEof) == 0 then
+      return
+    end
+  end
 end
 
 function UnixServer:handleLogOutput(contents)
@@ -507,6 +540,8 @@ function GenericUnixPlatform:startServer()
   local actions = t_file_actions()
   must0("posix_spawn_file_actions_init", C.posix_spawn_file_actions_init(actions))
 
+  -- Restored after the protected call, so an escaped error cannot leave it set.
+  local old_dir = nil
   local ok, pid_or_error = pcall(function()
     if disable_logging then
       -- OS-level redirection: stdout and stderr go to /dev/null.
@@ -524,11 +559,10 @@ function GenericUnixPlatform:startServer()
       must0("posix_spawn_file_actions_addclose", C.posix_spawn_file_actions_addclose(actions, capturer.stderr_pipe[1]))
     end
 
-    local old_dir = nil
+    local cwd_buf = ffi.new("char[4096]")
     if SERVER_COMMAND_WORKING_DIRECTORY ~= nil then
-      local buf = ffi.new("char[4096]")
-      if C.getcwd(buf, 4096) ~= nil then
-        old_dir = ffi.string(buf)
+      if C.getcwd(cwd_buf, 4096) ~= nil then
+        old_dir = ffi.string(cwd_buf)
         C.chdir(SERVER_COMMAND_WORKING_DIRECTORY)
       end
     end
@@ -538,18 +572,23 @@ function GenericUnixPlatform:startServer()
 
     if old_dir ~= nil then
       C.chdir(old_dir)
+      old_dir = nil
     end
 
     must0("posix_spawn", spawn_res)
     return pid_ptr[0]
   end)
 
+  if old_dir ~= nil then
+    C.chdir(old_dir)
+  end
+
   C.posix_spawn_file_actions_destroy(actions)
 
   if not ok then
     if capturer then
-      capturer:cancelPeriodicPipeOutput()
-      capturer:closePipesAfterFailedSpawn()
+      capturer:cancel_periodic_pipe_output()
+      capturer:close_pipes_after_failed_spawn()
     end
     error(pid_or_error, 0)
   end

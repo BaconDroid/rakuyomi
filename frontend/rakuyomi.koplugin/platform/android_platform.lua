@@ -61,6 +61,8 @@ end
 function AndroidServer:stop()
   local android = require("android")
   android.openLink("rakuyomi_bridge://stop")
+
+  return true
 end
 
 --- @class AndroidPlatform: Platform

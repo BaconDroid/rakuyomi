@@ -28,40 +28,46 @@ local LoadingDialog = {}
 --- @generic T: any
 --- @param runnable fun(...): T
 --- @return fun(...): T
-local function asBackendWorker(runnable)
+local function as_backend_worker(runnable)
   return function(...)
-    Backend.clearRecoveryRequest()
-    Backend.markAsWorkerProcess()
+    Backend.clear_recovery_request()
+    Backend.mark_as_worker_process()
     local results = table.pack(runnable(...))
-    table.insert(results, 1, Backend.recoveryRequired())
-    results.n = results.n + 1
+    table.insert(results, 1, Backend.recovery_required())
+    table.insert(results, 2, Backend.replay_allowed())
+    results.n = results.n + 2
     return unpack(results, 1, results.n)
   end
 end
 
-local function showTaskDialog(message, onCancel, onConfirmCancel, onSetCancelled)
+local function show_task_dialog(message, onCancel, onConfirmCancel, on_set_cancelled)
   local dialog
-  local confirmCancelDialog
-  local cancelHandled = false
-  local function handleCancel()
-    if cancelHandled then
+  local confirm_cancel_dialog
+  local cancel_handled = false
+  local function cancel_once()
+    if cancel_handled then
       return
     end
-    cancelHandled = true
-    local cancel = function()
-      onSetCancelled(true)
-      if onCancel ~= nil then
-        onCancel()
-      end
+    cancel_handled = true
+    on_set_cancelled(true)
+    if onCancel ~= nil then
+      onCancel()
+    end
+  end
+  local function handle_cancel()
+    if cancel_handled then
+      return
     end
     if onConfirmCancel ~= nil then
-      confirmCancelDialog = onConfirmCancel(cancel)
+      -- The guard only latches once the user confirms, so dismissing the
+      -- confirmation leaves the task cancellable.
+      confirm_cancel_dialog = onConfirmCancel(cancel_once)
     else
-      cancel()
+      cancel_once()
     end
   end
 
-  local function createDialog(text)
+  local function create_dialog(text)
     dialog = onCancel == nil and InfoMessage:new {
       text = text,
       dismissable = false,
@@ -74,13 +80,13 @@ local function showTaskDialog(message, onCancel, onConfirmCancel, onSetCancelled
         if dialog.dismiss_callback then
           dialog.dismiss_callback()
         end
-        handleCancel()
+        handle_cancel()
       end
     }
     return dialog
   end
 
-  createDialog(message)
+  create_dialog(message)
   UIManager:show(dialog)
   UIManager:forceRePaint()
 
@@ -90,14 +96,14 @@ local function showTaskDialog(message, onCancel, onConfirmCancel, onSetCancelled
     end,
     set = function(text)
       UIManager:close(dialog)
-      createDialog(text)
+      create_dialog(text)
       UIManager:show(dialog)
       UIManager:forceRePaint()
     end,
-    getConfirmCancel = function()
-      return confirmCancelDialog
+    get_confirm_cancel = function()
+      return confirm_cancel_dialog
     end,
-    handleCancel = handleCancel,
+    handle_cancel = handle_cancel,
   }
 end
 
@@ -115,37 +121,41 @@ function LoadingDialog:showAndRun(message, runnable, onCancel, onConfirmCancel, 
   assert(Trapper:isWrapped(), "expected to be called inside a function wrapped with `Trapper:wrap()`")
 
   local cancelled = false
-  local dialogRef = showTaskDialog(message, onCancel, onConfirmCancel, function(value)
+  local dialog_ref = show_task_dialog(message, onCancel, onConfirmCancel, function(value)
     cancelled = value
   end)
-  local message_dialog = dialogRef.get()
+  local message_dialog = dialog_ref.get()
 
-  local completed, recovery_required, return_values =
-      Trapper:dismissableRunInSubprocess(asBackendWorker(runnable), message_dialog)
+  local completed, recovery_required, replay_allowed, return_values =
+      Trapper:dismissableRunInSubprocess(as_backend_worker(runnable), message_dialog)
   if completed and not cancelled and recovery_required then
     -- The subprocess lost the backend, but only this process can replace `Backend.server`.
     Backend.restart()
-    if onRecovery ~= nil then
-      onRecovery()
+    if replay_allowed then
+      if onRecovery ~= nil then
+        onRecovery()
+      end
+      -- `_` is the gettext binding in this module, so read the retry by index.
+      local retry = table.pack(
+        Trapper:dismissableRunInSubprocess(as_backend_worker(runnable), message_dialog))
+      completed, return_values = retry[1], retry[4]
     end
-    completed, _, return_values =
-        Trapper:dismissableRunInSubprocess(asBackendWorker(runnable), message_dialog)
   end
 
   if onCancel == nil then
     assert(completed, "Expected runnable to run to completion")
   end
 
-  local confirmCancel = dialogRef.getConfirmCancel()
-  if confirmCancel ~= nil then
-    UIManager:close(confirmCancel)
+  local confirm_cancel = dialog_ref.get_confirm_cancel()
+  if confirm_cancel ~= nil then
+    UIManager:close(confirm_cancel)
   end
   UIManager:close(message_dialog)
 
   return return_values, cancelled
 end
 
-local function allocateProgressShm()
+local function allocate_progress_shm()
   local shm_size = ffi.sizeof("ko_progress_shm_t")
   local raw_shm = C.mmap(nil, shm_size, bit.bor(C.PROT_READ, C.PROT_WRITE), bit.bor(C.MAP_SHARED, C.MAP_ANONYMOUS), -1, 0)
 
@@ -161,7 +171,7 @@ local function allocateProgressShm()
   return { raw_shm = raw_shm, shm = shm, shm_size = shm_size }
 end
 
-local function scheduleProgressPoll(shm, message, getDialog, setDialog, lastTextRef)
+local function schedule_progress_poll(shm, message, get_dialog, set_dialog, last_text_ref)
   local poll_action
   poll_action = function()
     -- If child process signals a new update (updated == 1)
@@ -173,13 +183,13 @@ local function scheduleProgressPoll(shm, message, getDialog, setDialog, lastText
         local percentage = math.floor(processed / total * 100)
         local new_text = message .. "\n\n" .. percentage .. "% (" .. processed .. "/" .. total .. ")"
 
-        if new_text ~= lastTextRef.text then
-          lastTextRef.text = new_text
-          local current_dismiss_cb = getDialog().dismiss_callback
+        if new_text ~= last_text_ref.text then
+          last_text_ref.text = new_text
+          local current_dismiss_cb = get_dialog().dismiss_callback
 
-          setDialog(new_text)
+          set_dialog(new_text)
 
-          getDialog().dismiss_callback = current_dismiss_cb
+          get_dialog().dismiss_callback = current_dismiss_cb
         end
       end
       -- reset update flag for next update from child
@@ -193,7 +203,7 @@ local function scheduleProgressPoll(shm, message, getDialog, setDialog, lastText
   return poll_action
 end
 
-local function createProgressTask(runnable, shm)
+local function create_progress_task(runnable, shm)
   return function()
     local child_progress = function(progress)
       if not progress or progress.type ~= 'DOWNLOADING' then return end
@@ -206,34 +216,36 @@ local function createProgressTask(runnable, shm)
   end
 end
 
-local function runWorkerWithRecovery(task, message_dialog, onRecovery)
-  local results = table.pack(Trapper:dismissableRunInSubprocess(asBackendWorker(task), message_dialog, false))
-  if results[1] and results[2] then
+local function run_worker_with_recovery(task, message_dialog, onRecovery, is_cancelled)
+  local results = table.pack(Trapper:dismissableRunInSubprocess(as_backend_worker(task), message_dialog, false))
+  if results[1] and results[2] and not (is_cancelled ~= nil and is_cancelled()) then
     -- The subprocess lost the backend, but only this process can replace `Backend.server`.
     Backend.restart()
-    if onRecovery ~= nil then
-      onRecovery()
+    if results[3] then
+      if onRecovery ~= nil then
+        onRecovery()
+      end
+      results = table.pack(Trapper:dismissableRunInSubprocess(as_backend_worker(task), message_dialog, false))
     end
-    results = table.pack(Trapper:dismissableRunInSubprocess(asBackendWorker(task), message_dialog, false))
   end
   return results
 end
 
-local function finishProgressTask(progress, message_dialog, getConfirmCancel, poll_action, handleCancel, onCancel, completed)
+local function finish_progress_task(progress, message_dialog, get_confirm_cancel, poll_action, handle_cancel, onCancel, completed)
   UIManager:unschedule(poll_action)
   C.munmap(progress.raw_shm, progress.shm_size)
 
   if not completed then
-    handleCancel()
+    handle_cancel()
   end
 
   if onCancel == nil then
     assert(completed, "Expected runnable to run to completion")
   end
 
-  local confirmCancel = getConfirmCancel()
-  if confirmCancel ~= nil then
-    UIManager:close(confirmCancel)
+  local confirm_cancel = get_confirm_cancel()
+  if confirm_cancel ~= nil then
+    UIManager:close(confirm_cancel)
   end
   UIManager:close(message_dialog)
 end
@@ -252,24 +264,26 @@ function LoadingDialog:showAndRunWithProgress(message, runnable, onCancel, onCon
   assert(Trapper:isWrapped(), "expected to be called inside a function wrapped with `Trapper:wrap()`")
 
   local cancelled = false
-  local dialogRef = showTaskDialog(message, onCancel, onConfirmCancel, function(value)
+  local dialog_ref = show_task_dialog(message, onCancel, onConfirmCancel, function(value)
     cancelled = value
   end)
 
-  local progress = allocateProgressShm()
+  local progress = allocate_progress_shm()
   local shm = progress.shm
 
   local last_text = { text = message }
-  local poll_action = scheduleProgressPoll(shm, message, dialogRef.get, dialogRef.set, last_text)
+  local poll_action = schedule_progress_poll(shm, message, dialog_ref.get, dialog_ref.set, last_text)
 
   local trapper_results =
-      runWorkerWithRecovery(createProgressTask(runnable, shm), dialogRef.get(), onRecovery)
+      run_worker_with_recovery(create_progress_task(runnable, shm), dialog_ref.get(), onRecovery, function()
+        return cancelled
+      end)
 
   local completed = trapper_results[1]
-  finishProgressTask(progress, dialogRef.get(), dialogRef.getConfirmCancel, poll_action, dialogRef.handleCancel, onCancel, completed)
+  finish_progress_task(progress, dialog_ref.get(), dialog_ref.get_confirm_cancel, poll_action, dialog_ref.handle_cancel, onCancel, completed)
 
   if completed then
-    return unpack(trapper_results, 3, trapper_results.n), cancelled
+    return unpack(trapper_results, 4, trapper_results.n), cancelled
   else
     return nil, cancelled
   end

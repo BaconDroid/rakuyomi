@@ -63,7 +63,8 @@ function DownloadChapter:start()
 end
 
 --- Forget backend-owned state so the job can be recreated after a backend restart.
-function DownloadChapter:resetForBackendRecovery()
+---@return nil
+function DownloadChapter:reset_for_backend_recovery()
   self.started = false
   self.start_result = nil
   self.job_id = nil

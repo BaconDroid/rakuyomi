@@ -108,12 +108,13 @@ fn resolve_plugin_dir_uncached() -> anyhow::Result<PathBuf> {
         return Ok(parent);
     }
 
-    // The result is validated by has_normal_final_component before use.
+    // The fallback trusts argv[0] only when it is absolute and names a plugin
+    // directory: destructive cleanup derives paths from whatever this returns.
     // nosemgrep
     if let Some(parent) = std::env::args()
         .next()
         .and_then(|arg| PathBuf::from(arg).parent().map(Path::to_path_buf))
-        .filter(|parent| has_normal_final_component(parent))
+        .filter(|parent| parent.is_absolute() && is_plugin_directory_name(parent))
     {
         return Ok(parent);
     }
@@ -121,6 +122,16 @@ fn resolve_plugin_dir_uncached() -> anyhow::Result<PathBuf> {
     Err(anyhow::anyhow!(
         "Could not locate rakuyomi's plugin directory"
     ))
+}
+
+/// Whether `path` ends in a directory named like a KOReader plugin. Cleanup
+/// derives `.koplugin.bak` and temporary paths from this value, so a name that
+/// is not a plugin directory must never be accepted.
+#[cfg(not(target_os = "android"))]
+fn is_plugin_directory_name(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.ends_with(".koplugin"))
 }
 
 /// Whether `path` ends in a named directory. Rejects `.`, `..`, `/` and the
