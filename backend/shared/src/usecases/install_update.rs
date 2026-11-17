@@ -13,10 +13,6 @@ use walkdir::WalkDir;
 /// leftovers from an interrupted download.
 const UPDATE_DOWNLOAD_PREFIX: &str = "rakuyomi-update-";
 
-/// Resolved once, before any update can rename the plugin directory. After a
-/// successful install the running binary lives under `rakuyomi.koplugin.bak`,
-/// so a later `current_exe()` would target the backup instead of the active
-/// plugin directory.
 static PLUGIN_DIR: OnceLock<PathBuf> = OnceLock::new();
 
 pub async fn install_update(version: String, build_name: String) -> anyhow::Result<()> {
@@ -64,8 +60,6 @@ fn cleanup_update_artifacts(plugin_dir: &Path) {
     }
 }
 
-/// Locate the plugin directory, resolving it only once per process so a later
-/// install cannot target a directory renamed by a previous update.
 fn resolve_plugin_dir() -> anyhow::Result<PathBuf> {
     if let Some(dir) = PLUGIN_DIR.get() {
         return Ok(dir.clone());
@@ -108,8 +102,6 @@ fn resolve_plugin_dir_uncached() -> anyhow::Result<PathBuf> {
         return Ok(parent);
     }
 
-    // The fallback trusts argv[0] only when it is absolute and names a plugin
-    // directory: destructive cleanup derives paths from whatever this returns.
     // nosemgrep
     if let Some(parent) = std::env::args()
         .next()
@@ -124,9 +116,6 @@ fn resolve_plugin_dir_uncached() -> anyhow::Result<PathBuf> {
     ))
 }
 
-/// Whether `path` ends in a directory named like a KOReader plugin. Cleanup
-/// derives `.koplugin.bak` and temporary paths from this value, so a name that
-/// is not a plugin directory must never be accepted.
 #[cfg(not(target_os = "android"))]
 fn is_plugin_directory_name(path: &Path) -> bool {
     path.file_name()

@@ -28,8 +28,6 @@ end
 
 local F_SETFL = 4
 local O_NONBLOCK = 0x4
--- poll(2) always reports POLLHUP (never requested through `events`); 0x10 on
--- both Linux and macOS.
 local POLLHUP = 0x10
 
 ---@class SubprocessOutputCapturer
@@ -96,7 +94,6 @@ function SubprocessOutputCapturer:periodicallyPipeOutput(onStdout, onStderr, onE
     self.pollTask = nil
     self:pipeOutput(onStdout, onStderr, onEof)
 
-    -- Both pipes reached EOF: nothing more can ever be read, so stop polling.
     if self.stdoutEof and self.stderrEof then
       return
     end
@@ -109,7 +106,6 @@ function SubprocessOutputCapturer:periodicallyPipeOutput(onStdout, onStderr, onE
 end
 
 --- Cancels the pending poll scheduled by `periodicallyPipeOutput`, if any.
---- Does not touch the pipe descriptors; see `close_pipes`.
 ---@return nil
 function SubprocessOutputCapturer:cancel_periodic_pipe_output()
   if self.pollTask then
@@ -127,8 +123,6 @@ function SubprocessOutputCapturer:close_pipes()
   close_fd(self.stderr_pipe, 0)
 end
 
--- `setupParentProcess` never runs on this path, so both pipe ends are closed
--- here or the write ends leak across failed spawn attempts.
 ---@return nil
 function SubprocessOutputCapturer:close_pipes_after_failed_spawn()
   close_fd(self.stdout_pipe, 0)
@@ -152,8 +146,6 @@ function SubprocessOutputCapturer:pipeOutput(onStdout, onStderr, onEof)
   }
 
   for i, stream in ipairs(streams) do
-    -- poll() ignores negative descriptors, so a stream whose descriptor was
-    -- closed (at EOF or by close_pipes) is no longer polled.
     fds[i - 1].fd = stream.fd
     fds[i - 1].events = C.POLLIN
   end
@@ -163,8 +155,6 @@ function SubprocessOutputCapturer:pipeOutput(onStdout, onStderr, onEof)
   end
 
   for i, stream in ipairs(streams) do
-    -- Once the writer is gone and the pipe is drained the kernel reports
-    -- POLLHUP without POLLIN; reading then returns 0, which is the EOF signal.
     if bit.band(fds[i - 1].revents, readableEvents) ~= 0 then
       local bytes_read = C.read(stream.fd, buffer, 1024)
       if bytes_read > 0 then

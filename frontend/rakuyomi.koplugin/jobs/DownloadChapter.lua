@@ -62,15 +62,6 @@ function DownloadChapter:start()
   return response
 end
 
---- Forget backend-owned state so the job can be recreated after a backend restart.
----@return nil
-function DownloadChapter:reset_for_backend_recovery()
-  self.started = false
-  self.start_result = nil
-  self.job_id = nil
-  self.result = nil
-end
-
 --- @return SuccessfulResponse<DownloadChapterJobCompleted>|ErrorResponse
 function DownloadChapter:runUntilCompletion(onProgress)
   return Job.runUntilCompletion(self, onProgress)
