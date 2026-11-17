@@ -48,10 +48,10 @@ local function show_task_dialog(message, onCancel, onConfirmCancel, on_set_cance
       return
     end
     cancel_handled = true
+    on_set_cancelled(true)
     if dialog ~= nil and dialog.dismiss_callback ~= nil then
       dialog.dismiss_callback()
     end
-    on_set_cancelled(true)
     if onCancel ~= nil then
       onCancel()
     end
