@@ -48,6 +48,9 @@ local function show_task_dialog(message, onCancel, onConfirmCancel, on_set_cance
       return
     end
     cancel_handled = true
+    if dialog ~= nil and dialog.dismiss_callback ~= nil then
+      dialog.dismiss_callback()
+    end
     on_set_cancelled(true)
     if onCancel ~= nil then
       onCancel()
@@ -73,9 +76,6 @@ local function show_task_dialog(message, onCancel, onConfirmCancel, on_set_cance
       icon = "notice-info",
       no_ok_button = true,
       cancel_callback = function()
-        if dialog.dismiss_callback then
-          dialog.dismiss_callback()
-        end
         handle_cancel()
       end
     }
@@ -99,7 +99,7 @@ local function show_task_dialog(message, onCancel, onConfirmCancel, on_set_cance
     get_confirm_cancel = function()
       return confirm_cancel_dialog
     end,
-    handle_cancel = handle_cancel,
+    cancel_once = cancel_once,
   }
 end
 
@@ -208,12 +208,12 @@ local function run_worker_with_recovery(task, message_dialog, is_cancelled)
   return results
 end
 
-local function finish_progress_task(progress, message_dialog, get_confirm_cancel, poll_action, handle_cancel, onCancel, completed)
+local function finish_progress_task(progress, message_dialog, get_confirm_cancel, poll_action, cancel_once, onCancel, completed)
   UIManager:unschedule(poll_action)
   C.munmap(progress.raw_shm, progress.shm_size)
 
   if not completed then
-    handle_cancel()
+    cancel_once()
   end
 
   if onCancel == nil then
@@ -254,7 +254,7 @@ function LoadingDialog:showAndRunWithProgress(message, runnable, onCancel, onCon
       end)
 
   local completed = trapper_results[1]
-  finish_progress_task(progress, dialog_ref.get(), dialog_ref.get_confirm_cancel, poll_action, dialog_ref.handle_cancel, onCancel, completed)
+  finish_progress_task(progress, dialog_ref.get(), dialog_ref.get_confirm_cancel, poll_action, dialog_ref.cancel_once, onCancel, completed)
 
   if completed then
     return unpack(trapper_results, 3, trapper_results.n), cancelled

@@ -483,6 +483,24 @@ mod tests {
         assert!(!has_normal_final_component(Path::new("")));
     }
 
+    #[cfg(not(target_os = "android"))]
+    #[test]
+    fn plugin_dir_name_must_end_with_koplugin() {
+        assert!(is_plugin_directory_name(Path::new(
+            "/sdcard/koreader/plugins/rakuyomi.koplugin"
+        )));
+        assert!(is_plugin_directory_name(Path::new(
+            "/sdcard/koreader/plugins/other.koplugin"
+        )));
+        assert!(!is_plugin_directory_name(Path::new(
+            "/sdcard/koreader/plugins/rakuyomi"
+        )));
+        assert!(!is_plugin_directory_name(Path::new(
+            "/sdcard/koreader/plugins"
+        )));
+        assert!(!is_plugin_directory_name(Path::new("/")));
+    }
+
     #[test]
     fn cleanup_update_artifacts_removes_backup_and_leftover_downloads() {
         let temp_dir = tempfile::tempdir().expect("temporary directory");
