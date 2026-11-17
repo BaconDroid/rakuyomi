@@ -75,7 +75,10 @@ end
 --- @return boolean success
 function Backend.restart()
   Backend.cleanup()
-  local ok, init_logs = Backend.initialize()
+  local called, ok, init_logs = pcall(Backend.initialize)
+  if not called then
+    ok, init_logs = false, tostring(ok)
+  end
   backendInitialized, logs = ok, init_logs
 
   return ok
@@ -147,8 +150,19 @@ function Backend.requestJson(request)
     -- (e.g. OOM-killed). Detect it, log the real cause, and restart once
     -- transparently instead of degrading into silent failures.
     local msg = response.message or ""
-    local is_socket_error = msg:find("^connect%(%):") ~= nil
+    local is_local_resource_error = msg:find("Too many open files")
+        or msg:find("Too many open files in system")
+        or msg:find("Cannot allocate memory")
+        or msg:find("Permission denied")
+    local is_socket_error = not is_local_resource_error and (
+        msg:find("^connect%(%):") ~= nil
         or msg:find("^socket%(%):") ~= nil
+        or msg:find("^write:") ~= nil
+        or msg == "empty response from server"
+        or msg:find("Connection reset by peer") ~= nil
+        or msg == "connection refused"
+        or msg == "Connection refused"
+    )
 
     if is_socket_error and not request._backend_retried and not request.skip_recovery then
       if isWorkerProcess then

@@ -161,6 +161,7 @@ end
 ---@field private logBuffer string[]
 ---@field private disable_logging boolean
 ---@field private dead boolean
+---@field private reaped boolean
 local UnixServer = {}
 
 function UnixServer:new(pid, outputCapturer)
@@ -173,6 +174,7 @@ function UnixServer:new(pid, outputCapturer)
     maxLogLines = 100,
     disable_logging = disable_logging,
     dead = false,
+    reaped = false,
   }
   setmetatable(server, { __index = UnixServer })
 
@@ -208,18 +210,29 @@ function UnixServer:isAlive()
     return false
   end
 
-  if ffi.errno() == ECHILD then
-    -- Already reaped (or never our child): the process is gone.
+  local wait_errno = ffi.errno()
+  if wait_errno == ECHILD then
     self.dead = true
+    self.reaped = true
     return false
   end
 
-  -- Unexpected failure (e.g. EINTR): fall back to the plain presence probe.
-  -- EPERM means the process exists but cannot be signalled, so it is alive;
-  -- only ESRCH identifies an absent process.
-  if C.kill(self.pid, 0) == 0 or ffi.errno() == EPERM then
+  if wait_errno == EINTR then
+    return not self.dead
+  end
+
+  if C.kill(self.pid, 0) == 0 then
     return true
   end
+
+  local kill_errno = ffi.errno()
+  if kill_errno == EPERM then
+    return true
+  end
+  if kill_errno == EINTR then
+    return not self.dead
+  end
+
   self.dead = true
   return false
 end
@@ -359,6 +372,12 @@ function UnixServer:terminateProcess()
     end
   end
 
+  if self.reaped then
+    unlinkSocket()
+    self:flushLogBuffer()
+    return
+  end
+
   logger.info("Terminating subprocess with PID " .. self.pid)
   local result = C.kill(self.pid, SIGTERM)
   if result < 0 then
@@ -370,6 +389,7 @@ function UnixServer:terminateProcess()
 
   if waitForExit(TERM_TIMEOUT_SECONDS) then
     logger.info("Subprocess finished after SIGTERM")
+    self.reaped = true
     unlinkSocket()
     self:flushLogBuffer()
     return
@@ -386,6 +406,7 @@ function UnixServer:terminateProcess()
 
   if waitForExit(KILL_TIMEOUT_SECONDS) then
     logger.info("Subprocess finished after SIGKILL")
+    self.reaped = true
   else
     logger.err("Subprocess could not be reaped before shutdown deadline:", self.pid)
   end
