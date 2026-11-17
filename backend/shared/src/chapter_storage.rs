@@ -665,6 +665,10 @@ impl ChapterStorage {
         }
 
         self.downloads_folder_path = path;
+        self.cached_storage_size.store(
+            self.calculate_storage_size().bytes() as u64,
+            Ordering::Relaxed,
+        );
 
         Ok(())
     }

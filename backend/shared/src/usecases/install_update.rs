@@ -92,7 +92,7 @@ fn resolve_plugin_dir_uncached() -> anyhow::Result<PathBuf> {
     if let Some(parent) = std::env::current_exe()
         .ok()
         .and_then(|exe| exe.parent().map(Path::to_path_buf))
-        .filter(|parent| parent.is_absolute() && is_plugin_directory_name(parent))
+        .filter(|parent| is_plugin_directory(parent))
     {
         return Ok(parent);
     }
@@ -101,7 +101,7 @@ fn resolve_plugin_dir_uncached() -> anyhow::Result<PathBuf> {
     if let Some(parent) = std::env::args()
         .next()
         .and_then(|arg| PathBuf::from(arg).parent().map(Path::to_path_buf))
-        .filter(|parent| parent.is_absolute() && is_plugin_directory_name(parent))
+        .filter(|parent| is_plugin_directory(parent))
     {
         return Ok(parent);
     }
@@ -112,10 +112,13 @@ fn resolve_plugin_dir_uncached() -> anyhow::Result<PathBuf> {
 }
 
 #[cfg(not(target_os = "android"))]
-fn is_plugin_directory_name(path: &Path) -> bool {
-    path.file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| name.ends_with(".koplugin"))
+fn is_plugin_directory(path: &Path) -> bool {
+    path.is_absolute()
+        && path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.ends_with(".koplugin"))
+        && path.join("main.lua").is_file()
 }
 
 /// Removes leftover update downloads from an interrupted attempt located in
@@ -456,19 +459,29 @@ mod tests {
     #[cfg(not(target_os = "android"))]
     #[test]
     fn plugin_dir_name_must_end_with_koplugin() {
-        assert!(is_plugin_directory_name(Path::new(
-            "/sdcard/koreader/plugins/rakuyomi.koplugin"
-        )));
-        assert!(is_plugin_directory_name(Path::new(
-            "/sdcard/koreader/plugins/other.koplugin"
-        )));
-        assert!(!is_plugin_directory_name(Path::new(
-            "/sdcard/koreader/plugins/rakuyomi"
-        )));
-        assert!(!is_plugin_directory_name(Path::new(
-            "/sdcard/koreader/plugins"
-        )));
-        assert!(!is_plugin_directory_name(Path::new("/")));
+        let temp = tempfile::tempdir().expect("temporary directory");
+        let plugin = temp.path().join("rakuyomi.koplugin");
+        fs::create_dir(&plugin).expect("create plugin directory");
+        assert!(
+            !is_plugin_directory(&plugin),
+            "the plugin entry point is required before cleanup may target a directory"
+        );
+
+        fs::write(plugin.join("main.lua"), b"--").expect("write entry point");
+        assert!(is_plugin_directory(&plugin));
+
+        let other_plugin = temp.path().join("other.koplugin");
+        fs::create_dir(&other_plugin).expect("create plugin directory");
+        fs::write(other_plugin.join("main.lua"), b"--").expect("write entry point");
+        assert!(is_plugin_directory(&other_plugin));
+
+        let plain = temp.path().join("rakuyomi");
+        fs::create_dir(&plain).expect("create directory");
+        fs::write(plain.join("main.lua"), b"--").expect("write entry point");
+        assert!(
+            !is_plugin_directory(&plain),
+            "the directory name must end with .koplugin"
+        );
     }
 
     #[test]
