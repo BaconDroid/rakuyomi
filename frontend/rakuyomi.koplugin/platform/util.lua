@@ -161,10 +161,12 @@ function SubprocessOutputCapturer:pipeOutput(onStdout, onStderr, onEof)
         total_read = total_read + bytes_read
         stream.onData(ffi.string(buffer, bytes_read))
       elseif bytes_read == 0 then
-        self[stream.eofField] = true
         close_fd(stream.pipe, 0)
-        if onEof then
-          onEof(stream.name)
+        if not self[stream.eofField] then
+          self[stream.eofField] = true
+          if onEof then
+            onEof(stream.name)
+          end
         end
       end
     end

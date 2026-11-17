@@ -88,16 +88,11 @@ fn resolve_plugin_dir_uncached() -> anyhow::Result<PathBuf> {
 
 #[cfg(not(target_os = "android"))]
 fn resolve_plugin_dir_uncached() -> anyhow::Result<PathBuf> {
-    // Prefer current_exe(): it yields an absolute path to the running binary,
-    // so its parent is the plugin directory. argv[0] can be relative (e.g.
-    // "./server"), in which case its parent is "." and cleanup_update_backup()
-    // would delete the current working directory.
-    // The path only locates the plugin directory; no trust decision is made on it.
     // nosemgrep
     if let Some(parent) = std::env::current_exe()
         .ok()
         .and_then(|exe| exe.parent().map(Path::to_path_buf))
-        .filter(|parent| has_normal_final_component(parent))
+        .filter(|parent| parent.is_absolute() && is_plugin_directory_name(parent))
     {
         return Ok(parent);
     }
@@ -121,16 +116,6 @@ fn is_plugin_directory_name(path: &Path) -> bool {
     path.file_name()
         .and_then(|name| name.to_str())
         .is_some_and(|name| name.ends_with(".koplugin"))
-}
-
-/// Whether `path` ends in a named directory. Rejects `.`, `..`, `/` and the
-/// empty path, none of which can be a plugin directory that is safe to clean up.
-#[cfg(not(target_os = "android"))]
-fn has_normal_final_component(path: &Path) -> bool {
-    matches!(
-        path.components().next_back(),
-        Some(std::path::Component::Normal(_))
-    )
 }
 
 /// Removes leftover update downloads from an interrupted attempt located in
@@ -467,21 +452,6 @@ fn rollback_update(plugin_dir: &Path, backup_dir: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[cfg(not(target_os = "android"))]
-    #[test]
-    fn plugin_dir_must_end_in_a_named_directory() {
-        assert!(has_normal_final_component(Path::new(
-            "/sdcard/koreader/plugins/rakuyomi.koplugin"
-        )));
-        assert!(has_normal_final_component(Path::new(
-            "./plugins/rakuyomi.koplugin"
-        )));
-        assert!(!has_normal_final_component(Path::new(".")));
-        assert!(!has_normal_final_component(Path::new("..")));
-        assert!(!has_normal_final_component(Path::new("/")));
-        assert!(!has_normal_final_component(Path::new("")));
-    }
 
     #[cfg(not(target_os = "android"))]
     #[test]

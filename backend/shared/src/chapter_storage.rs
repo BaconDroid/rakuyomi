@@ -654,12 +654,14 @@ impl ChapterStorage {
         fs::create_dir_all(&path)
             .with_context(|| "while trying to ensure chapter storage exists")?;
 
-        if let Err(err) = Self::cleanup_orphan_temp_files(&self.downloads_folder_path) {
-            log::warn!(
-                "Failed to sweep orphan temporary downloads in {}: {}",
-                self.downloads_folder_path.display(),
-                err
-            );
+        for folder in [self.downloads_folder_path.as_path(), path.as_path()] {
+            if let Err(err) = Self::cleanup_orphan_temp_files(folder) {
+                log::warn!(
+                    "Failed to sweep orphan temporary downloads in {}: {}",
+                    folder.display(),
+                    err
+                );
+            }
         }
 
         self.downloads_folder_path = path;
