@@ -34,8 +34,7 @@ local function as_backend_worker(runnable)
     Backend.mark_as_worker_process()
     local results = table.pack(runnable(...))
     table.insert(results, 1, Backend.recovery_required())
-    table.insert(results, 2, Backend.replay_allowed())
-    results.n = results.n + 2
+    results.n = results.n + 1
     return unpack(results, 1, results.n)
   end
 end
@@ -59,8 +58,6 @@ local function show_task_dialog(message, onCancel, onConfirmCancel, on_set_cance
       return
     end
     if onConfirmCancel ~= nil then
-      -- The guard only latches once the user confirms, so dismissing the
-      -- confirmation leaves the task cancellable.
       confirm_cancel_dialog = onConfirmCancel(cancel_once)
     else
       cancel_once()
@@ -75,7 +72,6 @@ local function show_task_dialog(message, onCancel, onConfirmCancel, on_set_cance
       text = text,
       icon = "notice-info",
       no_ok_button = true,
-      -- dismissable = false,
       cancel_callback = function()
         if dialog.dismiss_callback then
           dialog.dismiss_callback()
@@ -107,7 +103,6 @@ local function show_task_dialog(message, onCancel, onConfirmCancel, on_set_cance
   }
 end
 
---- Shows a message in a info dialog, while running the given `runnable` function.
 --- Must be called from inside a function wrapped with `Trapper:wrap()`.
 ---
 --- @generic T: any
@@ -115,9 +110,8 @@ end
 --- @param runnable fun(): T The function to be ran while showing the dialog.
 --- @param onCancel fun()?: T An optional function to be called if the dialog is dismissed/cancelled.
 --- @param onConfirmCancel (fun(any): any) | nil
---- @param onRecovery fun()?: nil Reset backend-owned state before a recovery retry.
 --- @return T, boolean
-function LoadingDialog:showAndRun(message, runnable, onCancel, onConfirmCancel, onRecovery)
+function LoadingDialog:showAndRun(message, runnable, onCancel, onConfirmCancel)
   assert(Trapper:isWrapped(), "expected to be called inside a function wrapped with `Trapper:wrap()`")
 
   local cancelled = false
@@ -126,20 +120,10 @@ function LoadingDialog:showAndRun(message, runnable, onCancel, onConfirmCancel, 
   end)
   local message_dialog = dialog_ref.get()
 
-  local completed, recovery_required, replay_allowed, return_values =
+  local completed, recovery_required, return_values =
       Trapper:dismissableRunInSubprocess(as_backend_worker(runnable), message_dialog)
   if completed and not cancelled and recovery_required then
-    -- The subprocess lost the backend, but only this process can replace `Backend.server`.
     Backend.restart()
-    if replay_allowed then
-      if onRecovery ~= nil then
-        onRecovery()
-      end
-      -- `_` is the gettext binding in this module, so read the retry by index.
-      local retry = table.pack(
-        Trapper:dismissableRunInSubprocess(as_backend_worker(runnable), message_dialog))
-      completed, return_values = retry[1], retry[4]
-    end
   end
 
   if onCancel == nil then
@@ -216,17 +200,10 @@ local function create_progress_task(runnable, shm)
   end
 end
 
-local function run_worker_with_recovery(task, message_dialog, onRecovery, is_cancelled)
+local function run_worker_with_recovery(task, message_dialog, is_cancelled)
   local results = table.pack(Trapper:dismissableRunInSubprocess(as_backend_worker(task), message_dialog, false))
   if results[1] and results[2] and not (is_cancelled ~= nil and is_cancelled()) then
-    -- The subprocess lost the backend, but only this process can replace `Backend.server`.
     Backend.restart()
-    if results[3] then
-      if onRecovery ~= nil then
-        onRecovery()
-      end
-      results = table.pack(Trapper:dismissableRunInSubprocess(as_backend_worker(task), message_dialog, false))
-    end
   end
   return results
 end
@@ -250,17 +227,14 @@ local function finish_progress_task(progress, message_dialog, get_confirm_cancel
   UIManager:close(message_dialog)
 end
 
---- Shows a message with progress updates in a dialog, while running the given `runnable` function.
 --- Must be called from inside a function wrapped with `Trapper:wrap()`.
----
 --- @generic T: any
 --- @param message string The message to be shown on the dialog.
 --- @param runnable fun(onProgress: fun(progress: { type: string, processed: number?, total: number? })): T The function to be ran while showing the dialog. Receives a callback to report progress.
 --- @param onCancel fun()?: T An optional function to be called if the dialog is dismissed/cancelled.
 --- @param onConfirmCancel (fun(any): any) | nil
---- @param onRecovery fun()?: nil Reset backend-owned state before a recovery retry.
 --- @return T, boolean
-function LoadingDialog:showAndRunWithProgress(message, runnable, onCancel, onConfirmCancel, onRecovery)
+function LoadingDialog:showAndRunWithProgress(message, runnable, onCancel, onConfirmCancel)
   assert(Trapper:isWrapped(), "expected to be called inside a function wrapped with `Trapper:wrap()`")
 
   local cancelled = false
@@ -275,7 +249,7 @@ function LoadingDialog:showAndRunWithProgress(message, runnable, onCancel, onCon
   local poll_action = schedule_progress_poll(shm, message, dialog_ref.get, dialog_ref.set, last_text)
 
   local trapper_results =
-      run_worker_with_recovery(create_progress_task(runnable, shm), dialog_ref.get(), onRecovery, function()
+      run_worker_with_recovery(create_progress_task(runnable, shm), dialog_ref.get(), function()
         return cancelled
       end)
 
@@ -283,7 +257,7 @@ function LoadingDialog:showAndRunWithProgress(message, runnable, onCancel, onCon
   finish_progress_task(progress, dialog_ref.get(), dialog_ref.get_confirm_cancel, poll_action, dialog_ref.handle_cancel, onCancel, completed)
 
   if completed then
-    return unpack(trapper_results, 4, trapper_results.n), cancelled
+    return unpack(trapper_results, 3, trapper_results.n), cancelled
   else
     return nil, cancelled
   end

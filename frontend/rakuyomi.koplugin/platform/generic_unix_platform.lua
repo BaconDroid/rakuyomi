@@ -45,7 +45,6 @@ pcall(ffi.cdef, [[
   int connect(int sockfd, const void *addr, unsigned int addrlen);
 ]])
 
--- `siginfo_t` is a 128-byte union; only `si_signo` (first field) is read here.
 ffi.cdef([[
   typedef struct { int si_signo; int si_errno; int si_code; char _pad[116]; } rakuyomi_siginfo_t;
 ]])
@@ -56,7 +55,6 @@ pcall(ffi.cdef, [[
 local P_PID = 1
 local WNOHANG = 1
 local WEXITED = 4
--- WNOWAIT leaves the child waitable, so the PID stays reserved until stop().
 local WNOWAIT = ffi.os == "OSX" and 0x20 or 0x01000000
 local ECHILD = 10
 local EPERM = 1
@@ -191,10 +189,6 @@ function UnixServer:new(pid, outputCapturer)
   return server
 end
 
---- Probe whether `pid` still exists with `kill(pid, 0)`.
----
---- `EPERM` means the process exists but cannot be signalled, so it counts as
---- alive. `EINTR` is transient, so the caller keeps its previous state.
 ---@param pid number
 ---@param previous_alive boolean Liveness to keep when the probe is interrupted.
 ---@return boolean alive
@@ -226,7 +220,6 @@ function UnixServer:is_alive()
     return false
   end
 
-  -- ffi.new zero-fills, so si_signo stays 0 unless a child state change is reported.
   local info = ffi.new("rakuyomi_siginfo_t")
   local result = C.waitid(P_PID, self.pid, ffi.cast("void *", info), WEXITED + WNOHANG + WNOWAIT)
 
@@ -244,8 +237,6 @@ function UnixServer:is_alive()
   end
 
   if wait_errno == ECHILD then
-    -- Only the process that spawned the child can reap it. A forked worker is
-    -- not the child's parent, so ECHILD there says nothing about liveness.
     if self.owner_pid ~= C.getpid() then
       return probe_process_alive(self.pid, true)
     end
@@ -385,8 +376,6 @@ function UnixServer:terminate_process()
     until false
   end
 
-  -- Unlink the socket file so a stale socket does not linger on disk after
-  -- the server process is gone (the next request would get ECONNREFUSED).
   local function unlinkSocket()
     if not SOCKET_PATH then
       return
@@ -433,7 +422,6 @@ function UnixServer:terminate_process()
     logger.info("Subprocess finished after SIGKILL")
     self.reaped = true
   else
-    -- Child may still be alive: keep handle and socket, start no replacement.
     logger.err("Subprocess could not be reaped before shutdown deadline:", self.pid)
     self:flushLogBuffer()
     return false
@@ -451,7 +439,6 @@ function UnixServer:startLogCapture()
   end
 
   local onEof = function(stream_name)
-    -- EOF alone does not prove the backend exited; is_alive() probes the process.
     logger.warn("Server output pipe closed (" .. stream_name .. "); check the backend process")
   end
 
@@ -540,7 +527,6 @@ function GenericUnixPlatform:startServer()
   local actions = t_file_actions()
   must0("posix_spawn_file_actions_init", C.posix_spawn_file_actions_init(actions))
 
-  -- Restored after the protected call, so an escaped error cannot leave it set.
   local old_dir = nil
   local ok, pid_or_error = pcall(function()
     if disable_logging then

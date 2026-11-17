@@ -37,6 +37,5 @@ end
 
 --- Stops the server.
 --- @return boolean|nil success False when the child could not be reaped; nil when
---- the implementation cannot report it.
 function Server:stop()
 end
