@@ -376,18 +376,7 @@ function UnixServer:terminate_process()
     until false
   end
 
-  local function unlinkSocket()
-    if not SOCKET_PATH then
-      return
-    end
-    local ok, err = os.remove(SOCKET_PATH)
-    if not ok then
-      logger.warn("Failed to unlink socket", SOCKET_PATH, err)
-    end
-  end
-
   if self.reaped then
-    unlinkSocket()
     self:flushLogBuffer()
     return true
   end
@@ -404,7 +393,6 @@ function UnixServer:terminate_process()
   if waitForExit(TERM_TIMEOUT_SECONDS) then
     logger.info("Subprocess finished after SIGTERM")
     self.reaped = true
-    unlinkSocket()
     self:flushLogBuffer()
     return true
   end
@@ -427,7 +415,6 @@ function UnixServer:terminate_process()
     return false
   end
 
-  unlinkSocket()
   self:flushLogBuffer()
   return true
 end

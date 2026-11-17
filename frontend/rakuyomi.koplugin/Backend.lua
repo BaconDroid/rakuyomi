@@ -94,7 +94,7 @@ local function is_request_replayable(request)
     return request.replay_safe
   end
   local method = request.method or "GET"
-  return method == "GET" or method == "HEAD" or method == "PUT" or method == "DELETE"
+  return method == "GET" or method == "HEAD"
 end
 
 --- Performs a HTTP request, using JSON to encode the request body and to decode the response body.
