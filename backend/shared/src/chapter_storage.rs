@@ -654,21 +654,9 @@ impl ChapterStorage {
         fs::create_dir_all(&path)
             .with_context(|| "while trying to ensure chapter storage exists")?;
 
-        for folder in [self.downloads_folder_path.as_path(), path.as_path()] {
-            if let Err(err) = Self::cleanup_orphan_temp_files(folder) {
-                log::warn!(
-                    "Failed to sweep orphan temporary downloads in {}: {}",
-                    folder.display(),
-                    err
-                );
-            }
-        }
-
         self.downloads_folder_path = path;
-        self.cached_storage_size.store(
-            self.calculate_storage_size().bytes() as u64,
-            Ordering::Relaxed,
-        );
+        let size = self.calculate_storage_size().bytes() as u64;
+        self.cached_storage_size = Arc::new(AtomicU64::new(size));
 
         Ok(())
     }
