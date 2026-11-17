@@ -210,16 +210,8 @@ function Backend.requestJson(request)
   if err then
     if not request.skip_recovery and not request._backend_retried then
       local replay_allowed = is_request_replayable(request)
-      if is_worker_process then
-        backend_recovery_required = true
-        return {
-          type = 'ERROR',
-          status = response.status,
-          message = tostring(response.body),
-        }
-      end
-
-      if not Backend.running() and Backend.restart() and replay_allowed then
+      if not is_worker_process and not Backend.running()
+          and Backend.restart() and replay_allowed then
         local retry_request = {}
         for k, v in pairs(request) do
           retry_request[k] = v
