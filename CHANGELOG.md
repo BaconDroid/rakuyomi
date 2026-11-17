@@ -1,3 +1,20 @@
+## [1.45.4](https://github.com/BaconDroid/rakuyomi/compare/v1.45.3...v1.45.4) (2026-11-17)
+
+
+### Bug Fixes
+
+* address review findings on dead-backend recovery ([8d7dd01](https://github.com/BaconDroid/rakuyomi/commit/8d7dd01b02db21a14d16aea4eacbbd3818fed94c))
+* gate cancel confirmation before dismissing and drop false worker recovery ([1d426c5](https://github.com/BaconDroid/rakuyomi/commit/1d426c5d0aaff927185c1bbe03352a38887792c2))
+* harden backend recovery against PID reuse and local errors ([b0a27b4](https://github.com/BaconDroid/rakuyomi/commit/b0a27b4dabee780cafb6bc19ec82eb56f7988c6f))
+* own the storage counter per directory and publish cancel before dismiss ([e48580f](https://github.com/BaconDroid/rakuyomi/commit/e48580f0795be75922f5ff22e57ad7e3e9c21ae4))
+* recover backend state in the parent process ([c3a8384](https://github.com/BaconDroid/rakuyomi/commit/c3a83841ff7d302004253441588bd09b85a25ec8))
+* recover from a silently dead backend and stop leaking temp files ([18e13aa](https://github.com/BaconDroid/rakuyomi/commit/18e13aa0e911b4f8c14e4de3407a8bec7f8b5900))
+* replay only safe methods and drop the client-side socket unlink ([cd457a8](https://github.com/BaconDroid/rakuyomi/commit/cd457a81a41dc59cf967bdfccfe8cbd57ab116e2))
+* require the plugin entry point before destructive cleanup ([78caa11](https://github.com/BaconDroid/rakuyomi/commit/78caa11a9969a8c913037f32404eeb25e9de436a))
+* resolve plugin directory once before update renames it ([bbaebc9](https://github.com/BaconDroid/rakuyomi/commit/bbaebc987d907fdef207a680ea939113a9b3fcac))
+* skip recovery after cancel and treat truncated HTTP as lost ([45c08ee](https://github.com/BaconDroid/rakuyomi/commit/45c08eeb01982ea6e098a4ec459d42d033eb6cde))
+* stop replaying a failed task after backend recovery ([d002177](https://github.com/BaconDroid/rakuyomi/commit/d002177111f49cfb9e7371dccedb83272e310da2))
+
 ## [1.45.3](https://github.com/BaconDroid/rakuyomi/compare/v1.45.2...v1.45.3) (2026-11-07)
 
 
