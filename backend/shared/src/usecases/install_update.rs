@@ -4,6 +4,7 @@ use log::{error, info, warn};
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::time::Duration;
 use tempfile::{NamedTempFile, TempDir};
 use walkdir::WalkDir;
@@ -11,6 +12,12 @@ use walkdir::WalkDir;
 /// Prefix of the temporary update downloads, also used when cleaning up
 /// leftovers from an interrupted download.
 const UPDATE_DOWNLOAD_PREFIX: &str = "rakuyomi-update-";
+
+/// Resolved once, before any update can rename the plugin directory. After a
+/// successful install the running binary lives under `rakuyomi.koplugin.bak`,
+/// so a later `current_exe()` would target the backup instead of the active
+/// plugin directory.
+static PLUGIN_DIR: OnceLock<PathBuf> = OnceLock::new();
 
 pub async fn install_update(version: String, build_name: String) -> anyhow::Result<()> {
     let plugin_dir = resolve_plugin_dir().context("Could not get rakuyomi's plugin directory")?;
@@ -57,8 +64,20 @@ fn cleanup_update_artifacts(plugin_dir: &Path) {
     }
 }
 
-#[cfg(target_os = "android")]
+/// Locate the plugin directory, resolving it only once per process so a later
+/// install cannot target a directory renamed by a previous update.
 fn resolve_plugin_dir() -> anyhow::Result<PathBuf> {
+    if let Some(dir) = PLUGIN_DIR.get() {
+        return Ok(dir.clone());
+    }
+
+    let dir = resolve_plugin_dir_uncached()?;
+    let _ = PLUGIN_DIR.set(dir.clone());
+    Ok(dir)
+}
+
+#[cfg(target_os = "android")]
+fn resolve_plugin_dir_uncached() -> anyhow::Result<PathBuf> {
     let paths = [
         "/sdcard/koreader/plugins/rakuyomi.koplugin",
         "/storage/emulated/0/koreader/plugins/rakuyomi.koplugin",
@@ -74,7 +93,7 @@ fn resolve_plugin_dir() -> anyhow::Result<PathBuf> {
 }
 
 #[cfg(not(target_os = "android"))]
-fn resolve_plugin_dir() -> anyhow::Result<PathBuf> {
+fn resolve_plugin_dir_uncached() -> anyhow::Result<PathBuf> {
     // Prefer current_exe(): it yields an absolute path to the running binary,
     // so its parent is the plugin directory. argv[0] can be relative (e.g.
     // "./server"), in which case its parent is "." and cleanup_update_backup()
