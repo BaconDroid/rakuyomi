@@ -42,7 +42,12 @@ end
 local function showTaskDialog(message, onCancel, onConfirmCancel, onSetCancelled)
   local dialog
   local confirmCancelDialog
+  local cancelHandled = false
   local function handleCancel()
+    if cancelHandled then
+      return
+    end
+    cancelHandled = true
     local cancel = function()
       onSetCancelled(true)
       if onCancel ~= nil then
@@ -68,9 +73,8 @@ local function showTaskDialog(message, onCancel, onConfirmCancel, onSetCancelled
       cancel_callback = function()
         if dialog.dismiss_callback then
           dialog.dismiss_callback()
-        else
-          handleCancel()
         end
+        handleCancel()
       end
     }
     return dialog
@@ -93,6 +97,7 @@ local function showTaskDialog(message, onCancel, onConfirmCancel, onSetCancelled
     getConfirmCancel = function()
       return confirmCancelDialog
     end,
+    handleCancel = handleCancel,
   }
 end
 
@@ -214,15 +219,12 @@ local function runWorkerWithRecovery(task, message_dialog, onRecovery)
   return results
 end
 
-local function finishProgressTask(progress, message_dialog, getConfirmCancel, poll_action, onCancel, onSetCancelled, completed)
+local function finishProgressTask(progress, message_dialog, getConfirmCancel, poll_action, handleCancel, onCancel, completed)
   UIManager:unschedule(poll_action)
   C.munmap(progress.raw_shm, progress.shm_size)
 
   if not completed then
-    onSetCancelled(true)
-    if onCancel ~= nil then
-      onCancel()
-    end
+    handleCancel()
   end
 
   if onCancel == nil then
@@ -264,9 +266,7 @@ function LoadingDialog:showAndRunWithProgress(message, runnable, onCancel, onCon
       runWorkerWithRecovery(createProgressTask(runnable, shm), dialogRef.get(), onRecovery)
 
   local completed = trapper_results[1]
-  finishProgressTask(progress, dialogRef.get(), dialogRef.getConfirmCancel, poll_action, onCancel, function(value)
-    cancelled = value
-  end, completed)
+  finishProgressTask(progress, dialogRef.get(), dialogRef.getConfirmCancel, poll_action, dialogRef.handleCancel, onCancel, completed)
 
   if completed then
     return unpack(trapper_results, 3, trapper_results.n), cancelled
