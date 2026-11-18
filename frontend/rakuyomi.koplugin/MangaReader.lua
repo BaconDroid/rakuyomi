@@ -299,7 +299,14 @@ function MangaReader:hookReadHistory()
   ReadHistory.addItem = function(history, file, ts, ...)
     -- `ReaderUI` adds the document it opens without `ts`; items imported from the
     -- legacy history folder come with one and are left alone.
-    if ts == nil and file == self.path and is_enabled() then
+    -- Compare resolved paths so a symlink or a differently normalized path still
+    -- matches the way `updateLastBookTime` below resolves, and
+    -- `rakuyomi_disable_read_history` does not silently fail to apply. The raw
+    -- equality short-circuit skips the filesystem work for the common case;
+    -- when resolution fails, fall back to the original strings.
+    if ts == nil and self.path ~= nil and is_enabled()
+        and (file == self.path
+            or (realpath(file) or file) == (realpath(self.path) or self.path)) then
       return
     end
     return orig_add_item(history, file, ts, ...)
