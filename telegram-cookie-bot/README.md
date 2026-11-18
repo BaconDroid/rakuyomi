@@ -123,6 +123,7 @@ so one `.env` covers both commands.
 
    ```sh
    bun x wrangler secret put BOT_TOKEN
+   bun x wrangler secret put TURSO_DB_URL
    bun x wrangler secret put TURSO_AUTH_TOKEN
    bun x wrangler secret put WEBHOOK_SECRET
    ```
@@ -132,10 +133,12 @@ so one `.env` covers both commands.
    URL changes.
 
 3. The Worker registers the Telegram webhook on the first request it serves.
-   Set it by hand if needed:
+   To set it by hand, export the token and the secret, then call the API:
 
-   ```
-   https://api.telegram.org/bot<BOT_TOKEN>/setWebhook?url=https://<your-worker>.workers.dev/webhook&secret_token=<WEBHOOK_SECRET>
+   ```sh
+   curl "https://api.telegram.org/bot${BOT_TOKEN}/setWebhook" \
+     --data-urlencode "url=https://<your-worker>.workers.dev/webhook" \
+     --data-urlencode "secret_token=${WEBHOOK_SECRET}"
    ```
 
 ### Environment variables
@@ -146,7 +149,7 @@ so one `.env` covers both commands.
 | `TURSO_DB_URL`          | Yes      | Turso database URL                                           |
 | `TURSO_AUTH_TOKEN`      | Yes      | Turso database auth token                                    |
 | `PUBLIC_URL`            | Yes      | Public URL of the deployed server (OAuth + webhook)          |
-| `WEBHOOK_SECRET`        | No       | Secret checked on `/webhook`                                 |
+| `WEBHOOK_SECRET`        | Yes      | Secret checked on `/webhook`                                 |
 | `USE_WEBHOOK`           | No       | Set to `true` for webhook mode (the only one Workers allows)  |
 | `ANILIST_CLIENT_ID`     | No       | AniList OAuth client ID ([create here](https://anilist.co/settings/developer)) |
 | `ANILIST_CLIENT_SECRET` | No       | AniList OAuth client secret                                  |
@@ -179,8 +182,8 @@ old and the new one side by side while migrating):
 
 Each service also needs its OAuth credentials in production. MAL is the
 exception: it authorizes with PKCE, so it works without a client secret
-(`exchangeMalCode` only sends one when it is set). The other four require a
-client secret.
+(`exchangeMalCode` only sends one when it is set). AniList, Shikimori and
+Bangumi require a client secret; MangaBaka is a public client and needs none.
 
 ## Notes on the Cloudflare migration
 

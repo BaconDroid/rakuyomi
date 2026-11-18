@@ -27,8 +27,7 @@ test("ingestCookies — valid JSON stores cookies grouped by domain", async () =
   const domains = await ingestCookies(CHAT_ID, "/all", raw)
 
   assert.strictEqual(domains.length, 2)
-  assert.ok(domains.includes("example.com"))
-  assert.ok(domains.includes(".cf.com"))
+  assert.deepStrictEqual([...domains].sort(), [".cf.com", "example.com"])
 
   const deviceMap = await getDeviceCookies(CHAT_ID, "/all")
   assert.strictEqual(deviceMap.size, 2)

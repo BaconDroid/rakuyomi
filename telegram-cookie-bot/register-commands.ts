@@ -20,5 +20,9 @@ import { useEnv, type Env } from "./src/env.ts"
 useEnv(process.env as unknown as Env)
 
 const bot = createBot()
-await registerBotCommands(bot)
+const failed = await registerBotCommands(bot)
+if (failed.length > 0) {
+  console.error(`Failed to register commands for: ${failed.join(", ")}`)
+  process.exit(1)
+}
 console.log("Bot commands registered for every supported language.")
