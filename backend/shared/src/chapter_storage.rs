@@ -52,10 +52,19 @@ impl ChapterStorage {
         fs::create_dir_all(&downloads_folder_path)
             .with_context(|| "while trying to ensure chapter storage exists")?;
 
-        // Remove leftover temporary downloads from a previously killed backend
-        // (e.g. OOM-killed during chapter download) so they do not leak space
-        // forever.
-        let _ = Self::cleanup_orphan_temp_files(&downloads_folder_path);
+        let mut folders = vec![downloads_folder_path.clone()];
+        if let Some(tmpfs) = tmpfs_sibling(&downloads_folder_path) {
+            folders.push(tmpfs);
+        }
+        for folder in folders {
+            if let Err(err) = Self::cleanup_orphan_temp_files(&folder) {
+                log::warn!(
+                    "Failed to sweep orphan temporary downloads in {}: {}",
+                    folder.display(),
+                    err
+                );
+            }
+        }
 
         let storage = Self {
             downloads_folder_path,
@@ -72,30 +81,40 @@ impl ChapterStorage {
         Ok(storage)
     }
 
-    /// Remove orphan `downloads/.tmp*` files left behind when a download was
-    /// interrupted (e.g. backend OOM-killed). NamedTempFile creates files with a
-    /// `.tmpXXXXXX` prefix in the downloads folder, so we sweep for them.
+    /// Remove orphan temporary downloads left behind when a download was
+    /// interrupted (e.g. backend OOM-killed). `NamedTempFile::new_in` creates
+    /// regular files named `.tmp` + 6 alphanumeric characters in the downloads
+    /// folder; only entries of that exact shape are swept, so anything else a
+    /// user keeps there is left alone.
     fn cleanup_orphan_temp_files(downloads_folder_path: &Path) -> Result<()> {
         use log::warn;
 
         for entry in fs::read_dir(downloads_folder_path)? {
             let entry = entry?;
-            let path = entry.path();
-            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                if name.starts_with(".tmp") && name.len() > 4 {
-                    if path.is_dir() {
-                        if let Err(e) = fs::remove_dir_all(&path) {
-                            warn!("Failed to remove orphan temp dir {}: {}", path.display(), e);
-                        }
-                    } else {
-                        if let Err(e) = fs::remove_file(&path) {
-                            warn!(
-                                "Failed to remove orphan temp file {}: {}",
-                                path.display(),
-                                e
-                            );
-                        }
-                    }
+            let is_regular_file = match entry.file_type() {
+                Ok(file_type) => file_type.is_file(),
+                Err(err) => {
+                    warn!(
+                        "Failed to inspect {} while sweeping orphans: {}",
+                        entry.path().display(),
+                        err
+                    );
+                    false
+                }
+            };
+            let is_temp_name = entry
+                .file_name()
+                .to_str()
+                .is_some_and(is_tempfile_generated_name);
+
+            if is_regular_file && is_temp_name {
+                let path = entry.path();
+                if let Err(e) = fs::remove_file(&path) {
+                    warn!(
+                        "Failed to remove orphan temp file {}: {}",
+                        path.display(),
+                        e
+                    );
                 }
             }
         }
@@ -636,6 +655,8 @@ impl ChapterStorage {
             .with_context(|| "while trying to ensure chapter storage exists")?;
 
         self.downloads_folder_path = path;
+        let size = self.calculate_storage_size().bytes() as u64;
+        self.cached_storage_size = Arc::new(AtomicU64::new(size));
 
         Ok(())
     }
@@ -776,13 +797,28 @@ fn sdr_path(file_path: &std::path::Path) -> std::path::PathBuf {
     parent.join(format!("{}.sdr", stem.to_string_lossy()))
 }
 
+/// Whether `name` has the shape `tempfile` gives to its default temporary
+/// files: `.tmp` followed by exactly six ASCII alphanumeric characters.
+fn is_tempfile_generated_name(name: &str) -> bool {
+    name.strip_prefix(".tmp").is_some_and(|suffix| {
+        suffix.len() == 6 && suffix.bytes().all(|b| b.is_ascii_alphanumeric())
+    })
+}
+
+fn tmpfs_sibling(downloads_folder_path: &Path) -> Option<PathBuf> {
+    downloads_folder_path
+        .parent()
+        .map(|parent| parent.join("tmpfs"))
+        .filter(|path| path.is_dir())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use size::Size;
     use tempfile::tempdir;
 
-    fn make_storage() -> ChapterStorage {
+        fn make_storage() -> ChapterStorage {
         let dir = tempdir().unwrap();
         ChapterStorage::new(dir.keep(), Size::from_mebibytes(100.0), false).unwrap()
     }
@@ -807,7 +843,9 @@ mod tests {
         (img.width(), img.height())
     }
 
-    #[test]
+    
+
+#[test]
     fn image_is_transcoded_to_jpeg() {
         let _storage = make_storage();
         let input = make_rgb_jpeg(200, 300);

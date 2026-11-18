@@ -4,15 +4,25 @@ use log::{error, info, warn};
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::time::Duration;
 use tempfile::{NamedTempFile, TempDir};
 use walkdir::WalkDir;
 
-pub async fn install_update(version: String, build_name: String) -> anyhow::Result<()> {
-    // Download the asset to a temporary file
-    let update_zip_file = download_update_zip(&version, &build_name).await?;
+/// Prefix of the temporary update downloads, also used when cleaning up
+/// leftovers from an interrupted download.
+const UPDATE_DOWNLOAD_PREFIX: &str = "rakuyomi-update-";
 
+static PLUGIN_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+pub async fn install_update(version: String, build_name: String) -> anyhow::Result<()> {
     let plugin_dir = resolve_plugin_dir().context("Could not get rakuyomi's plugin directory")?;
+
+    let parent_dir = plugin_dir
+        .parent()
+        .context("Could not get parent directory for plugin")?;
+
+    let update_zip_file = download_update_zip(&version, &build_name, parent_dir).await?;
 
     // Get the path of the temporary file
     let zip_path = update_zip_file.path().to_path_buf();
@@ -24,7 +34,7 @@ pub async fn install_update(version: String, build_name: String) -> anyhow::Resu
     Ok(())
 }
 
-/// Remove the backup directory left behind after a successful update.
+/// Remove the backup directory and leftover update downloads.
 pub fn cleanup_update_backup() {
     let plugin_dir = match resolve_plugin_dir() {
         Ok(path) => path,
@@ -34,11 +44,29 @@ pub fn cleanup_update_backup() {
         }
     };
 
+    cleanup_update_artifacts(&plugin_dir);
+}
+
+fn cleanup_update_artifacts(plugin_dir: &Path) {
     cleanup_backup(&plugin_dir.with_extension("koplugin.bak"));
+
+    if let Some(parent_dir) = plugin_dir.parent() {
+        cleanup_tmp(parent_dir);
+    }
+}
+
+fn resolve_plugin_dir() -> anyhow::Result<PathBuf> {
+    if let Some(dir) = PLUGIN_DIR.get() {
+        return Ok(dir.clone());
+    }
+
+    let dir = resolve_plugin_dir_uncached()?;
+    let _ = PLUGIN_DIR.set(dir.clone());
+    Ok(dir)
 }
 
 #[cfg(target_os = "android")]
-fn resolve_plugin_dir() -> anyhow::Result<PathBuf> {
+fn resolve_plugin_dir_uncached() -> anyhow::Result<PathBuf> {
     let paths = [
         "/sdcard/koreader/plugins/rakuyomi.koplugin",
         "/storage/emulated/0/koreader/plugins/rakuyomi.koplugin",
@@ -54,61 +82,76 @@ fn resolve_plugin_dir() -> anyhow::Result<PathBuf> {
 }
 
 #[cfg(not(target_os = "android"))]
-fn resolve_plugin_dir() -> anyhow::Result<PathBuf> {
-    // Prefer current_exe(): it always yields an absolute, trustworthy path to
-    // the running binary, so its parent is the plugin directory. argv[0] can be
-    // relative (e.g. "./server"), in which case its parent is "." and we must
-    // refuse to use it — otherwise cleanup_update_backup() would delete the
-    // current working directory.
-    if let Ok(current_exe) = std::env::current_exe() {
-        if let Some(parent) = current_exe.parent() {
-            if !parent.as_os_str().is_empty() {
-                return Ok(Path::to_path_buf(parent));
-            }
-        }
+fn resolve_plugin_dir_uncached() -> anyhow::Result<PathBuf> {
+    if let Some(parent) = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(Path::to_path_buf))
+        .filter(|parent| is_plugin_directory(parent))
+    {
+        return Ok(parent);
     }
 
-    // Fallback: argv[0] parent, but refuse a canonical "." path.
-    if let Some(arg_path) = std::env::args().next().map(PathBuf::from) {
-        if let Some(parent) = arg_path.parent() {
-            if parent.as_os_str().is_empty() {
-                // No parent (e.g. just "server") — fall through to current_exe below.
-            } else if let Ok(canonical) = parent.canonicalize() {
-                if canonical.file_name().and_then(|n| n.to_str()) != Some(".") {
-                    return Ok(Path::to_path_buf(parent));
-                }
-            } else if parent.file_name().and_then(|n| n.to_str()) != Some(".") {
-                return Ok(Path::to_path_buf(parent));
-            }
-        }
+    if let Some(parent) = std::env::args()
+        .next()
+        .and_then(|arg| PathBuf::from(arg).parent().map(Path::to_path_buf))
+        .filter(|parent| is_plugin_directory(parent))
+    {
+        return Ok(parent);
     }
 
-    let current_exe = std::env::current_exe().context("Could not get current executable")?;
-    current_exe
-        .parent()
-        .map(Path::to_path_buf)
-        .context("Could not get rakuyomi's plugin directory")
+    Err(anyhow::anyhow!(
+        "Could not locate rakuyomi's plugin directory"
+    ))
 }
 
-fn cleanup_tmp() -> anyhow::Result<()> {
-    let tmp_dir = std::env::temp_dir();
+#[cfg(not(target_os = "android"))]
+fn is_plugin_directory(path: &Path) -> bool {
+    path.is_absolute()
+        && path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.ends_with(".koplugin"))
+        && path.join("main.lua").is_file()
+}
 
-    for entry in std::fs::read_dir(&tmp_dir)? {
-        let path = entry?.path();
-        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-            if name.starts_with("rakuyomi") {
-                if path.is_dir() {
-                    let _ = std::fs::remove_dir_all(&path);
-                } else {
-                    let _ = std::fs::remove_file(&path);
-                }
-            }
+/// Removes leftover update downloads from an interrupted attempt located in
+/// `tmp_dir`. Only regular files carrying [`UPDATE_DOWNLOAD_PREFIX`] are
+/// removed; directories are left alone because the plugin directory itself
+/// (and its backup) live next to the temporary files.
+fn cleanup_tmp(tmp_dir: &Path) {
+    let entries = match fs::read_dir(tmp_dir) {
+        Ok(entries) => entries,
+        Err(err) => {
+            warn!(
+                "Could not list {} to clean up temporary update files: {}",
+                tmp_dir.display(),
+                err
+            );
+            return;
+        }
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let is_update_download = path.is_file()
+            && path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with(UPDATE_DOWNLOAD_PREFIX));
+
+        if is_update_download {
+            let _ = fs::remove_file(&path);
         }
     }
-    Ok(())
 }
-/// Downloads the update zip file and saves it to a temporary file.
-async fn download_update_zip(version: &str, build_name: &str) -> anyhow::Result<NamedTempFile> {
+
+/// Downloads the update zip file and saves it to a named temporary file inside
+/// `temp_dir`.
+async fn download_update_zip(
+    version: &str,
+    build_name: &str,
+    temp_dir: &Path,
+) -> anyhow::Result<NamedTempFile> {
     let client = crate::tls::client_builder().build()?;
     let asset_name = format!("rakuyomi-{}.zip", build_name);
     let url = format!(
@@ -130,14 +173,18 @@ async fn download_update_zip(version: &str, build_name: &str) -> anyhow::Result<
     let mut stream = response.bytes_stream();
     let mut downloaded_bytes = 0;
 
-    // Retry loop: attempt twice (once + retry after cleanup)
     for attempt in 0..2 {
         // Create a named temp file for the download
         let mut update_zip_file = tempfile::Builder::new()
-            .prefix("rakuyomi-update-")
+            .prefix(UPDATE_DOWNLOAD_PREFIX)
             .suffix(".zip")
-            .tempfile()
-            .context("Could not create named temporary file for download")?;
+            .tempfile_in(temp_dir)
+            .with_context(|| {
+                format!(
+                    "Could not create named temporary file for download in {}",
+                    temp_dir.display()
+                )
+            })?;
 
         // Reset stream on retry
         if attempt == 1 {
@@ -187,11 +234,8 @@ async fn download_update_zip(version: &str, build_name: &str) -> anyhow::Result<
             return Ok(update_zip_file); // SUCCESS
         }
 
-        // If fail → cleanup + retry
         if attempt == 0 {
-            info!("Cleaning /tmp before retry…");
-            cleanup_tmp()?;
-            info!("Retrying download…");
+            info!("Retrying download...");
         }
     }
 
@@ -396,3 +440,4 @@ fn rollback_update(plugin_dir: &Path, backup_dir: &Path) {
         );
     }
 }
+

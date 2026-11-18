@@ -44,9 +44,58 @@ end
 --- @field body unknown? The request body to be sent. Must be encodable as JSON.
 --- @field query_params table<string, string|number|nil>? The query parameters to be sent on request.
 --- @field timeout number? The timeout used for this request. If unset, the default value for the platform will be used (usually 60 seconds).
+--- @field skip_recovery boolean? When true, a socket-level failure is returned as-is instead of restarting the backend. Used by startup probes, which fail until the child binds its socket and are retried by their own deadline loop.
 
 --- @class SuccessfulResponse<T>: { type: 'SUCCESS', body: T }
 --- @class ErrorResponse: { type: 'ERROR', status: number, message: string }
+
+--- State of the last `Backend.initialize()` call made through `Backend.getBackend()` or
+--- request recovery, exposed by `Backend.getInitialized()` and `Backend.getLogs()`.
+---@type boolean|nil, string|nil
+local backendInitialized, logs
+
+local is_worker_process = false
+local backend_recovery_required = false
+local backend_stop_incomplete = false
+
+---@return nil
+function Backend.mark_as_worker_process()
+  is_worker_process = true
+end
+
+---@return nil
+function Backend.clear_recovery_request()
+  backend_recovery_required = false
+end
+
+---@return boolean
+function Backend.recovery_required()
+  return backend_recovery_required
+end
+
+--- Restarts the backend and records the outcome as the current initialization state.
+--- @return boolean success
+function Backend.restart()
+  Backend.cleanup()
+  local called, ok, init_logs = pcall(Backend.initialize)
+  if not called then
+    ok, init_logs = false, tostring(ok)
+  end
+  backendInitialized, logs = ok, init_logs
+
+  return ok
+end
+
+--- Mutating methods are not replayed unless the caller opts in, because the
+---@param request RequestParameters
+---@return boolean
+local function is_request_replayable(request)
+  if request.replay_safe ~= nil then
+    return request.replay_safe
+  end
+  local method = request.method or "GET"
+  return method == "GET" or method == "HEAD"
+end
 
 --- Performs a HTTP request, using JSON to encode the request body and to decode the response body.
 --- @private
@@ -55,7 +104,25 @@ end
 --- @nodiscard
 --- @return SuccessfulResponse<T>|ErrorResponse # The parsed JSON response or nil, if there was an error.
 function Backend.requestJson(request)
-  assert(Backend.server ~= nil, "backend wasn't initialized!")
+  if Backend.server == nil then
+    if is_worker_process then
+      backend_recovery_required = true
+      return {
+        type = 'ERROR',
+        status = 0,
+        message = "backend isn't running",
+      }
+    end
+
+    if request.skip_recovery or not Backend.restart() then
+      return {
+        type = 'ERROR',
+        status = 0,
+        message = "backend isn't running",
+      }
+    end
+  end
+
   local url = require("socket.url")
 
   -- FIXME naming
@@ -92,19 +159,35 @@ function Backend.requestJson(request)
   )
 
   if response.type == 'ERROR' then
-    -- A connection-level error means the backend process may have died
-    -- (e.g. OOM-killed). Detect it, log the real cause, and restart once
-    -- transparently instead of degrading into silent failures.
     local msg = response.message or ""
-    local is_socket_error = msg:find("^connect%(%:)") ~= nil
-        or msg:find("^socket%(%:)") ~= nil
+    local is_local_resource_error = msg:find("Too many open files")
+        or msg:find("Too many open files in system")
+        or msg:find("Cannot allocate memory")
+        or msg:find("Permission denied")
+    local is_socket_error = not is_local_resource_error and (
+        msg:find("^connect%(%):") ~= nil
+        or msg:find("^socket%(%):") ~= nil
+        or msg:find("^write:") ~= nil
+        or msg == "empty response from server"
+        or msg == "malformed HTTP response"
+        or msg:find("Connection reset by peer") ~= nil
+        or msg == "connection refused"
+        or msg == "Connection refused"
+    )
 
-    if is_socket_error and not request._backend_retried then
+    if is_socket_error and not request._backend_retried and not request.skip_recovery then
+      local replay_allowed = is_request_replayable(request)
+
+      if is_worker_process then
+        logger.warn("backend request failed (socket error), requesting restart from parent:",
+          path_and_query, msg)
+        backend_recovery_required = true
+        return response
+      end
+
       logger.warn("backend request failed (socket error), restarting backend:",
         path_and_query, msg)
-      Backend.cleanup()
-      local ok = Backend.initialize()
-      if ok then
+      if Backend.restart() and replay_allowed then
         local retry_request = {}
         for k, v in pairs(request) do
           retry_request[k] = v
@@ -114,7 +197,8 @@ function Backend.requestJson(request)
       end
     end
 
-    logger.err("backend request failed", path_and_query, msg)
+    local log_error = request.skip_recovery and logger.warn or logger.err
+    log_error("backend request failed", path_and_query, msg)
     return response
   end
 
@@ -124,6 +208,19 @@ function Backend.requestJson(request)
   -- KOReader.
   local parsed_body, err = rapidjson.decode(response.body)
   if err then
+    if not request.skip_recovery and not request._backend_retried then
+      local replay_allowed = is_request_replayable(request)
+      if not is_worker_process and not Backend.running()
+          and Backend.restart() and replay_allowed then
+        local retry_request = {}
+        for k, v in pairs(request) do
+          retry_request[k] = v
+        end
+        retry_request._backend_retried = true
+        return Backend.requestJson(retry_request)
+      end
+    end
+
     logger.err("Request returned a non-JSON body with status code", response.status, "and body",
       response.body)
 
@@ -157,6 +254,7 @@ local function waitUntilHttpServerIsReady()
       return Backend.requestJson({
         path = '/health-check',
         timeout = 1,
+        skip_recovery = true,
       })
     end)
 
@@ -187,16 +285,31 @@ end
 ---@return boolean success Whether the backend was initialized successfully.
 ---@return string|nil logs On error, the last logs written by the server.
 function Backend.initialize()
+  if backend_stop_incomplete then
+    Backend.cleanup()
+    if backend_stop_incomplete then
+      return false, "previous backend process is still shutting down"
+    end
+  end
+
   if Backend.running() then
     return true, nil
+  end
+
+  Backend.cleanup()
+  if Backend.server ~= nil then
+    return false, "previous backend process is still shutting down"
   end
 
   Backend.server = Platform:startServer()
 
   if not waitUntilHttpServerIsReady() then
     local logBuffer = Backend.server:getLogBuffer()
-    Backend.server:stop()
-    Backend.server = nil
+    if Backend.server:stop() ~= false then
+      Backend.server = nil
+    else
+      backend_stop_incomplete = true
+    end
 
     return false, table.concat(logBuffer, "\n")
   end
@@ -205,7 +318,6 @@ function Backend.initialize()
 end
 
 ---@return boolean, string|nil
-local backendInitialized, logs
 function Backend.getBackend()
   if backendInitialized and Backend.running() then return true, nil end
   backendInitialized, logs = Backend.initialize()
@@ -246,7 +358,20 @@ end
 
 ---@return boolean
 function Backend.running()
-  return Backend.server ~= nil and Backend.server:isAlive()
+  if backend_stop_incomplete then
+    return false
+  end
+
+  local server = Backend.server
+  if server == nil then
+    return false
+  end
+
+  if server.is_alive == nil then
+    return true
+  end
+
+  return server:is_alive()
 end
 
 --- @class SourceInformation
@@ -1142,9 +1267,13 @@ end
 
 function Backend.cleanup()
   if Backend.server ~= nil then
-    Backend.server:stop()
-    Backend.server = nil
-    backendInitialized, logs = nil, nil
+    if Backend.server:stop() ~= false then
+      Backend.server = nil
+      backendInitialized, logs = nil, nil
+      backend_stop_incomplete = false
+    else
+      backend_stop_incomplete = true
+    end
   end
 end
 
@@ -1287,6 +1416,42 @@ function Backend.removeMangaFromPlaylist(playlist_id, source_id, manga_id)
   return Backend.requestJson({
     path = "/playlists/" .. playlist_id .. "/mangas/" .. source_id .. "/" .. util.urlEncode(manga_id),
     method = 'DELETE',
+  })
+end
+
+--- @class ReadingStatus
+--- @field id number
+--- @field name string
+
+--- @return SuccessfulResponse<ReadingStatus[]>|ErrorResponse
+function Backend.getReadingStatuses()
+  return Backend.requestJson({
+    path = "/reading-statuses",
+  })
+end
+
+--- @param source_id string
+--- @param manga_id string
+--- @param status_id number
+--- @return SuccessfulResponse<nil>|ErrorResponse
+function Backend.setMangaStatus(source_id, manga_id, status_id)
+  return Backend.requestJson({
+    path = "/mangas/" .. source_id .. "/" .. util.urlEncode(manga_id) .. "/status",
+    method = 'PUT',
+    body = { status_id = status_id },
+  })
+end
+
+--- @param status_ids number[]
+--- @return SuccessfulResponse<Manga[]>|ErrorResponse
+function Backend.getMangasByStatus(status_ids)
+  local query_parts = {}
+  for _, id in ipairs(status_ids) do
+    table.insert(query_parts, "status=" .. id)
+  end
+  local query_string = table.concat(query_parts, "&")
+  return Backend.requestJson({
+    path = "/mangas/by-status?" .. query_string,
   })
 end
 
