@@ -6,9 +6,9 @@ local ffiutil = require('ffi/util')
 local bit = require('bit')
 local Paths = require('Paths')
 local util = require('frontend/util')
+local time = require('ui/time')
 ---@diagnostic disable-next-line: different-requires
 local platformUtil = require('platform/util')
-local must = platformUtil.must
 local must0 = platformUtil.must0
 local SubprocessOutputCapturer = platformUtil.SubprocessOutputCapturer
 
@@ -16,6 +16,8 @@ local SERVER_COMMAND_WORKING_DIRECTORY = os.getenv('RAKUYOMI_SERVER_WORKING_DIRE
 local SERVER_COMMAND_OVERRIDE = os.getenv('RAKUYOMI_SERVER_COMMAND_OVERRIDE')
 
 local SOCKET_PATH = '/tmp/rakuyomi.sock'
+
+local MAX_FLUSH_READS = 64
 
 ffi.cdef([[
   char *getcwd(char *buf, size_t size);
@@ -31,6 +33,10 @@ ffi.cdef([[
 ]])
 
 pcall(ffi.cdef, [[
+  int getpid(void);
+]])
+
+pcall(ffi.cdef, [[
   struct sockaddr_un {
     unsigned short sun_family;
     char sun_path[108];
@@ -38,6 +44,20 @@ pcall(ffi.cdef, [[
   int socket(int domain, int type, int protocol);
   int connect(int sockfd, const void *addr, unsigned int addrlen);
 ]])
+
+ffi.cdef([[
+  typedef struct { int si_signo; int si_errno; int si_code; char _pad[116]; } rakuyomi_siginfo_t;
+]])
+pcall(ffi.cdef, [[
+  int waitid(int idtype, unsigned int id, void *infop, int options);
+]])
+
+local P_PID = 1
+local WNOHANG = 1
+local WEXITED = 4
+local WNOWAIT = ffi.os == "OSX" and 0x20 or 0x01000000
+local ECHILD = 10
+local EPERM = 1
 
 local AF_UNIX = 1
 local SOCK_STREAM = 1
@@ -145,6 +165,8 @@ end
 ---@field private logBuffer string[]
 ---@field private disable_logging boolean
 ---@field private dead boolean
+---@field private reaped boolean
+---@field private owner_pid number
 local UnixServer = {}
 
 function UnixServer:new(pid, outputCapturer)
@@ -157,6 +179,8 @@ function UnixServer:new(pid, outputCapturer)
     maxLogLines = 100,
     disable_logging = disable_logging,
     dead = false,
+    reaped = false,
+    owner_pid = C.getpid(),
   }
   setmetatable(server, { __index = UnixServer })
 
@@ -165,32 +189,70 @@ function UnixServer:new(pid, outputCapturer)
   return server
 end
 
---- Returns true if the backend subprocess is still alive.
----
---- Probes with `kill(pid, 0)`, which reports liveness without reaping the
---- child. Reaping is left to `stop()`, so the PID is never released for reuse
---- while we might still act on it.
----@return boolean
-function UnixServer:isAlive()
-  if self.dead then
-    return false
-  end
-  if self.pid == nil then
-    return false
-  end
-  -- A zombie still counts as present here; the EOF callback and stop() are
-  -- what mark the server dead definitively.
-  if C.kill(self.pid, 0) == 0 then
+---@param pid number
+---@param previous_alive boolean Liveness to keep when the probe is interrupted.
+---@return boolean alive
+local function probe_process_alive(pid, previous_alive)
+  if C.kill(pid, 0) == 0 then
     return true
   end
+
+  local err = ffi.errno()
+  if err == EPERM then
+    return true
+  end
+  if err == EINTR then
+    return previous_alive
+  end
+
+  return false
+end
+
+--- Returns true if the backend subprocess is still running.
+---
+--- Probes with `waitid(WEXITED | WNOHANG | WNOWAIT)`, which reports an exited
+--- child without reaping it: a crashed backend lingers as a zombie, which
+--- `kill(pid, 0)` would still report as present, and reaping is left to
+--- `stop()` so the PID is never released for reuse while we might act on it.
+---@return boolean
+function UnixServer:is_alive()
+  if self.dead or self.pid == nil then
+    return false
+  end
+
+  local info = ffi.new("rakuyomi_siginfo_t")
+  local result = C.waitid(P_PID, self.pid, ffi.cast("void *", info), WEXITED + WNOHANG + WNOWAIT)
+
+  if result == 0 then
+    if info.si_signo ~= 0 then
+      self.dead = true
+      return false
+    end
+    return true
+  end
+
+  local wait_errno = ffi.errno()
+  if wait_errno == EINTR then
+    return probe_process_alive(self.pid, true)
+  end
+
+  if wait_errno == ECHILD then
+    if self.owner_pid ~= C.getpid() then
+      return probe_process_alive(self.pid, true)
+    end
+    self.dead = true
+    self.reaped = true
+    return false
+  end
+
+  if probe_process_alive(self.pid, true) then
+    return true
+  end
+
   self.dead = true
   return false
 end
 
----@return boolean dead Whether the backend was already known dead.
-function UnixServer:isDead()
-  return self.dead == true
-end
 
 function UnixServer:getLogBuffer()
   self:flushLogBuffer()
@@ -276,23 +338,85 @@ function UnixServer:request(request)
   }
 end
 
+--- Stops the backend process, then releases the output capture: cancels the
+--- pending poll and closes any pipe descriptor still open.
+---@return boolean success Whether the child exited before the shutdown deadline.
 function UnixServer:stop()
+  local terminated = self:terminate_process()
+
+  if self.outputCapturer then
+    self.outputCapturer:cancel_periodic_pipe_output()
+    self.outputCapturer:close_pipes()
+  end
+
+  return terminated
+end
+
+---@return boolean success Whether the child exited before the shutdown deadline.
+function UnixServer:terminate_process()
   local SIGTERM = 15
+  local SIGKILL = 9
+  local ESRCH = 3
+  local TERM_TIMEOUT_SECONDS = 2
+  local KILL_TIMEOUT_SECONDS = 2
+
+  --- Wait for the child without blocking indefinitely.
+  ---@param timeout number
+  ---@return boolean
+  local function waitForExit(timeout)
+    local start = time.now()
+    repeat
+      if ffiutil.isSubProcessDone(self.pid) then
+        return true
+      end
+      if time.since(start) >= time.s(timeout) then
+        return false
+      end
+      ffiutil.usleep(100000)
+    until false
+  end
+
+  if self.reaped then
+    self:flushLogBuffer()
+    return true
+  end
 
   logger.info("Terminating subprocess with PID " .. self.pid)
-  must("kill", C.kill(self.pid, SIGTERM))
-  local done = ffiutil.isSubProcessDone(self.pid, true)
-
-  logger.info("Subprocess finished:", done)
-
-  -- Unlink the socket file so a stale socket does not linger on disk after
-  -- the server process is gone (the next request would get ECONNREFUSED).
-  if SOCKET_PATH then
-    local ok, err = os.remove(SOCKET_PATH)
-    if not ok then
-      logger.warn("Failed to unlink socket", SOCKET_PATH, err)
+  local result = C.kill(self.pid, SIGTERM)
+  if result < 0 then
+    local err = ffi.errno()
+    if err ~= ESRCH then
+      logger.warn("Failed to send SIGTERM to subprocess:", ffi.string(C.strerror(err)))
     end
   end
+
+  if waitForExit(TERM_TIMEOUT_SECONDS) then
+    logger.info("Subprocess finished after SIGTERM")
+    self.reaped = true
+    self:flushLogBuffer()
+    return true
+  end
+
+  logger.warn("Subprocess did not exit after SIGTERM; sending SIGKILL to PID " .. self.pid)
+  result = C.kill(self.pid, SIGKILL)
+  if result < 0 then
+    local err = ffi.errno()
+    if err ~= ESRCH then
+      logger.warn("Failed to send SIGKILL to subprocess:", ffi.string(C.strerror(err)))
+    end
+  end
+
+  if waitForExit(KILL_TIMEOUT_SECONDS) then
+    logger.info("Subprocess finished after SIGKILL")
+    self.reaped = true
+  else
+    logger.err("Subprocess could not be reaped before shutdown deadline:", self.pid)
+    self:flushLogBuffer()
+    return false
+  end
+
+  self:flushLogBuffer()
+  return true
 end
 
 function UnixServer:startLogCapture()
@@ -302,8 +426,7 @@ function UnixServer:startLogCapture()
   end
 
   local onEof = function(stream_name)
-    logger.warn("Server output pipe closed (" .. stream_name .. "); backend likely exited")
-    self.dead = true
+    logger.warn("Server output pipe closed (" .. stream_name .. "); check the backend process")
   end
 
   self.outputCapturer:periodicallyPipeOutput(onOutput, onOutput, onEof)
@@ -316,11 +439,14 @@ function UnixServer:flushLogBuffer()
   end
 
   local onEof = function(stream_name)
-    logger.warn("Server output pipe closed (" .. stream_name .. "); backend likely exited")
-    self.dead = true
+    logger.warn("Server output pipe closed (" .. stream_name .. "); check the backend process")
   end
 
-  self.outputCapturer:pipeOutput(onOutput, onOutput, onEof)
+  for _ = 1, MAX_FLUSH_READS do
+    if self.outputCapturer:pipeOutput(onOutput, onOutput, onEof) == 0 then
+      return
+    end
+  end
 end
 
 function UnixServer:handleLogOutput(contents)
@@ -388,33 +514,43 @@ function GenericUnixPlatform:startServer()
   local actions = t_file_actions()
   must0("posix_spawn_file_actions_init", C.posix_spawn_file_actions_init(actions))
 
-  if disable_logging then
-    -- OS-level redirection: stdout and stderr go to /dev/null.
-    -- No pipes created, no SubprocessOutputCapturer, zero overhead.
-    must0("addopen stdout", C.posix_spawn_file_actions_addopen(actions, 1, "/dev/null", bit.bor(O_WRONLY, O_CREAT, O_TRUNC), 0))
-    must0("addopen stderr", C.posix_spawn_file_actions_addopen(actions, 2, "/dev/null", bit.bor(O_WRONLY, O_CREAT, O_TRUNC), 0))
-  else
-    must0("posix_spawn_file_actions_adddup2", C.posix_spawn_file_actions_adddup2(actions, capturer.stdout_pipe[1], 1))
-    must0("posix_spawn_file_actions_adddup2", C.posix_spawn_file_actions_adddup2(actions, capturer.stderr_pipe[1], 2))
-
-    must0("posix_spawn_file_actions_addclose", C.posix_spawn_file_actions_addclose(actions, capturer.stdout_pipe[0]))
-    must0("posix_spawn_file_actions_addclose", C.posix_spawn_file_actions_addclose(actions, capturer.stderr_pipe[0]))
-
-    must0("posix_spawn_file_actions_addclose", C.posix_spawn_file_actions_addclose(actions, capturer.stdout_pipe[1]))
-    must0("posix_spawn_file_actions_addclose", C.posix_spawn_file_actions_addclose(actions, capturer.stderr_pipe[1]))
-  end
-
   local old_dir = nil
-  if SERVER_COMMAND_WORKING_DIRECTORY ~= nil then
-    local buf = ffi.new("char[4096]")
-    if C.getcwd(buf, 4096) ~= nil then
-      old_dir = ffi.string(buf)
-      C.chdir(SERVER_COMMAND_WORKING_DIRECTORY)
-    end
-  end
+  local ok, pid_or_error = pcall(function()
+    if disable_logging then
+      -- OS-level redirection: stdout and stderr go to /dev/null.
+      -- No pipes created, no SubprocessOutputCapturer, zero overhead.
+      must0("addopen stdout", C.posix_spawn_file_actions_addopen(actions, 1, "/dev/null", bit.bor(O_WRONLY, O_CREAT, O_TRUNC), 0))
+      must0("addopen stderr", C.posix_spawn_file_actions_addopen(actions, 2, "/dev/null", bit.bor(O_WRONLY, O_CREAT, O_TRUNC), 0))
+    else
+      must0("posix_spawn_file_actions_adddup2", C.posix_spawn_file_actions_adddup2(actions, capturer.stdout_pipe[1], 1))
+      must0("posix_spawn_file_actions_adddup2", C.posix_spawn_file_actions_adddup2(actions, capturer.stderr_pipe[1], 2))
 
-  local pid_ptr = t_int_array()
-  local spawn_res = C.posix_spawn(pid_ptr, binaryPath, actions, nil, argv, C.environ)
+      must0("posix_spawn_file_actions_addclose", C.posix_spawn_file_actions_addclose(actions, capturer.stdout_pipe[0]))
+      must0("posix_spawn_file_actions_addclose", C.posix_spawn_file_actions_addclose(actions, capturer.stderr_pipe[0]))
+
+      must0("posix_spawn_file_actions_addclose", C.posix_spawn_file_actions_addclose(actions, capturer.stdout_pipe[1]))
+      must0("posix_spawn_file_actions_addclose", C.posix_spawn_file_actions_addclose(actions, capturer.stderr_pipe[1]))
+    end
+
+    local cwd_buf = ffi.new("char[4096]")
+    if SERVER_COMMAND_WORKING_DIRECTORY ~= nil then
+      if C.getcwd(cwd_buf, 4096) ~= nil then
+        old_dir = ffi.string(cwd_buf)
+        C.chdir(SERVER_COMMAND_WORKING_DIRECTORY)
+      end
+    end
+
+    local pid_ptr = t_int_array()
+    local spawn_res = C.posix_spawn(pid_ptr, binaryPath, actions, nil, argv, C.environ)
+
+    if old_dir ~= nil then
+      C.chdir(old_dir)
+      old_dir = nil
+    end
+
+    must0("posix_spawn", spawn_res)
+    return pid_ptr[0]
+  end)
 
   if old_dir ~= nil then
     C.chdir(old_dir)
@@ -422,9 +558,15 @@ function GenericUnixPlatform:startServer()
 
   C.posix_spawn_file_actions_destroy(actions)
 
+  if not ok then
+    if capturer then
+      capturer:cancel_periodic_pipe_output()
+      capturer:close_pipes_after_failed_spawn()
+    end
+    error(pid_or_error, 0)
+  end
 
-  must0("posix_spawn", spawn_res)
-  local pid = pid_ptr[0]
+  local pid = pid_or_error
 
   if capturer then
     capturer:setupParentProcess()

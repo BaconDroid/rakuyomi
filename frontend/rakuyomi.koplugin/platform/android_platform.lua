@@ -61,6 +61,12 @@ end
 function AndroidServer:stop()
   local android = require("android")
   android.openLink("rakuyomi_bridge://stop")
+
+  -- The stop link is asynchronous: the companion app may still be shutting the
+  -- server down when this returns, so `true` means "stop requested", not
+  -- "shutdown confirmed". Callers that would restart the backend treat this as
+  -- best-effort cleanup.
+  return true
 end
 
 --- @class AndroidPlatform: Platform
