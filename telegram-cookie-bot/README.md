@@ -136,9 +136,11 @@ so one `.env` covers both commands.
    To set it by hand, export the token and the secret, then call the API:
 
    ```sh
-   curl "https://api.telegram.org/bot${BOT_TOKEN}/setWebhook" \
-     --data-urlencode "url=https://<your-worker>.workers.dev/webhook" \
-     --data-urlencode "secret_token=${WEBHOOK_SECRET}"
+   curl -K - <<EOF
+   url = "https://api.telegram.org/bot${BOT_TOKEN}/setWebhook"
+   data-urlencode = "url=https://<your-worker>.workers.dev/webhook"
+   data-urlencode = "secret_token=${WEBHOOK_SECRET}"
+   EOF
    ```
 
 ### Environment variables
@@ -149,7 +151,7 @@ so one `.env` covers both commands.
 | `TURSO_DB_URL`          | Yes      | Turso database URL                                           |
 | `TURSO_AUTH_TOKEN`      | Yes      | Turso database auth token                                    |
 | `PUBLIC_URL`            | Yes      | Public URL of the deployed server (OAuth + webhook)          |
-| `WEBHOOK_SECRET`        | Yes      | Secret checked on `/webhook`                                 |
+| `WEBHOOK_SECRET`        | Yes      | Secret checked on `/webhook`. Use 1-256 characters from `A-Z`, `a-z`, `0-9`, `_`, `-` only. Generate with `openssl rand -hex 32`. |
 | `USE_WEBHOOK`           | No       | Set to `true` for webhook mode (the only one Workers allows)  |
 | `ANILIST_CLIENT_ID`     | No       | AniList OAuth client ID ([create here](https://anilist.co/settings/developer)) |
 | `ANILIST_CLIENT_SECRET` | No       | AniList OAuth client secret                                  |
