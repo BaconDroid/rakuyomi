@@ -654,9 +654,11 @@ impl ChapterStorage {
         fs::create_dir_all(&path)
             .with_context(|| "while trying to ensure chapter storage exists")?;
 
-        self.downloads_folder_path = path;
-        let size = self.calculate_storage_size().bytes() as u64;
-        self.cached_storage_size = Arc::new(AtomicU64::new(size));
+        if self.downloads_folder_path != path {
+            self.downloads_folder_path = path;
+            let size = self.calculate_storage_size().bytes() as u64;
+            self.cached_storage_size = Arc::new(AtomicU64::new(size));
+        }
 
         Ok(())
     }

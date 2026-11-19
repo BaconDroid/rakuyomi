@@ -50,7 +50,9 @@ local function show_task_dialog(message, onCancel, onConfirmCancel, on_set_cance
     cancel_handled = true
     on_set_cancelled(true)
     if dialog ~= nil and dialog.dismiss_callback ~= nil then
-      dialog.dismiss_callback()
+      local dismiss_cb = dialog.dismiss_callback
+      dialog.dismiss_callback = nil
+      dismiss_cb()
     end
     if onCancel ~= nil then
       onCancel()
@@ -62,6 +64,18 @@ local function show_task_dialog(message, onCancel, onConfirmCancel, on_set_cance
     end
     if onConfirmCancel ~= nil then
       confirm_cancel_dialog = onConfirmCancel(cancel_once)
+      local confirm = confirm_cancel_dialog
+      if confirm ~= nil then
+        local orig_on_close = confirm.onCloseWidget
+        confirm.onCloseWidget = function(self)
+          if confirm_cancel_dialog == self then
+            confirm_cancel_dialog = nil
+          end
+          if orig_on_close ~= nil then
+            orig_on_close(self)
+          end
+        end
+      end
     else
       cancel_once()
     end
@@ -91,10 +105,17 @@ local function show_task_dialog(message, onCancel, onConfirmCancel, on_set_cance
       return dialog
     end,
     set = function(text)
+      if confirm_cancel_dialog ~= nil then
+        return false
+      end
+      local dismiss_cb = dialog.dismiss_callback
+      dialog.dismiss_callback = nil
       UIManager:close(dialog)
       create_dialog(text)
+      dialog.dismiss_callback = dismiss_cb
       UIManager:show(dialog)
       UIManager:forceRePaint()
+      return true
     end,
     get_confirm_cancel = function()
       return confirm_cancel_dialog
@@ -103,6 +124,7 @@ local function show_task_dialog(message, onCancel, onConfirmCancel, on_set_cance
   }
 end
 
+--- Shows a message in a info dialog, while running the given `runnable` function.
 --- Must be called from inside a function wrapped with `Trapper:wrap()`.
 ---
 --- @generic T: any
@@ -155,29 +177,31 @@ local function allocate_progress_shm()
   return { raw_shm = raw_shm, shm = shm, shm_size = shm_size }
 end
 
-local function schedule_progress_poll(shm, message, get_dialog, set_dialog, last_text_ref)
+local function schedule_progress_poll(shm, message, set_dialog, last_text_ref)
   local poll_action
   poll_action = function()
     -- If child process signals a new update (updated == 1)
     if shm.updated == 1 then
       local processed = shm.processed
       local total = shm.total
+      local applied = true
 
       if total > 0 then
         local percentage = math.floor(processed / total * 100)
         local new_text = message .. "\n\n" .. percentage .. "% (" .. processed .. "/" .. total .. ")"
 
         if new_text ~= last_text_ref.text then
-          last_text_ref.text = new_text
-          local current_dismiss_cb = get_dialog().dismiss_callback
-
-          set_dialog(new_text)
-
-          get_dialog().dismiss_callback = current_dismiss_cb
+          applied = set_dialog(new_text)
+          if applied then
+            last_text_ref.text = new_text
+          end
         end
       end
-      -- reset update flag for next update from child
-      shm.updated = 0
+
+      if applied then
+        -- reset update flag for next update from child
+        shm.updated = 0
+      end
     end
     UIManager:scheduleIn(0.1, poll_action)
   end
@@ -227,6 +251,7 @@ local function finish_progress_task(progress, message_dialog, get_confirm_cancel
   UIManager:close(message_dialog)
 end
 
+--- Shows a message with progress updates in a dialog, while running the given `runnable` function.
 --- Must be called from inside a function wrapped with `Trapper:wrap()`.
 --- @generic T: any
 --- @param message string The message to be shown on the dialog.
@@ -238,15 +263,19 @@ function LoadingDialog:showAndRunWithProgress(message, runnable, onCancel, onCon
   assert(Trapper:isWrapped(), "expected to be called inside a function wrapped with `Trapper:wrap()`")
 
   local cancelled = false
-  local dialog_ref = show_task_dialog(message, onCancel, onConfirmCancel, function(value)
+  local progress = allocate_progress_shm()
+  local dialog_ok, dialog_ref = pcall(show_task_dialog, message, onCancel, onConfirmCancel, function(value)
     cancelled = value
   end)
+  if not dialog_ok then
+    C.munmap(progress.raw_shm, progress.shm_size)
+    error(dialog_ref)
+  end
 
-  local progress = allocate_progress_shm()
   local shm = progress.shm
 
   local last_text = { text = message }
-  local poll_action = schedule_progress_poll(shm, message, dialog_ref.get, dialog_ref.set, last_text)
+  local poll_action = schedule_progress_poll(shm, message, dialog_ref.set, last_text)
 
   local trapper_results =
       run_worker_with_recovery(create_progress_task(runnable, shm), dialog_ref.get(), function()

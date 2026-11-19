@@ -185,9 +185,9 @@ function Backend.requestJson(request)
         return response
       end
 
-      logger.warn("backend request failed (socket error), restarting backend:",
+      logger.warn("backend request failed (socket error), recovering:",
         path_and_query, msg)
-      if Backend.restart() and replay_allowed then
+      if (Backend.running() or Backend.restart()) and replay_allowed then
         local retry_request = {}
         for k, v in pairs(request) do
           retry_request[k] = v
