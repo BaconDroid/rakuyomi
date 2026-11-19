@@ -180,3 +180,13 @@ coverage claim; #8/#9 intros restate full independence (each correct standalone,
 mergeable in any order) with only a one-line rebase note on the shared running()
 line; no test offer anywhere (lean per user decision). Kept: #9's isAlive shim, #8's spawn pcall,
 no further splitting. Wave 1 is closed; waves 2-3 on hold for the go.
+
+Backports to the fork (2026-11-19): the review fixes made on the upstream PRs were
+brought back to fork main in four commits grouped by source PR - "bring back the
+review fixes from the upstream recovery PR" (storage counter, socket-error liveness
+gate, dismiss_callback transfer, confirmation-open suspension, shm allocation order,
+restored docblock summaries), "accept form feed as an HTML tag boundary",
+"guard and short-circuit the ReadHistory path comparison", and the cookie-bot README
+(argv-free curl, WEBHOOK_SECRET charset). No tests added, mirroring the upstream
+PRs. Validation on the fork: luacheck 0/0 over 84 files, cargo test -p shared --lib
+361 pass.
