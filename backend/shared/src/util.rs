@@ -205,9 +205,9 @@ fn contains_tag_marker(window: &[u8], marker: &[u8]) -> bool {
         .enumerate()
         .any(|(index, part)| {
             part.eq_ignore_ascii_case(marker)
-                && window
-                    .get(index + marker.len())
-                    .is_none_or(|next| matches!(next, b'>' | b'/' | b' ' | b'\t' | b'\r' | b'\n'))
+                && window.get(index + marker.len()).is_none_or(|next| {
+                    matches!(next, b'>' | b'/' | b' ' | b'\t' | b'\r' | b'\n' | b'\x0c')
+                })
         })
 }
 
