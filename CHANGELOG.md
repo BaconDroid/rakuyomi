@@ -1,3 +1,12 @@
+## [1.45.5](https://github.com/BaconDroid/rakuyomi/compare/v1.45.4...v1.45.5) (2026-11-19)
+
+
+### Bug Fixes
+
+* bring back the review fixes from the upstream recovery PR ([13e64c0](https://github.com/BaconDroid/rakuyomi/commit/13e64c0dfe41e1b99690d9bb4c8d800f728d1114)), closes [yuuki-kagura/rakuyomi#9](https://github.com/yuuki-kagura/rakuyomi/issues/9)
+* **downloader:** accept form feed as an HTML tag boundary ([093056d](https://github.com/BaconDroid/rakuyomi/commit/093056d89dd9ee422b121c2190c34e5d859a51b7)), closes [yuuki-kagura/rakuyomi#6](https://github.com/yuuki-kagura/rakuyomi/issues/6)
+* **reader:** guard and short-circuit the ReadHistory path comparison ([dc7354d](https://github.com/BaconDroid/rakuyomi/commit/dc7354d7fac18a58ae480f7402804ce4ddaccaab)), closes [yuuki-kagura/rakuyomi#5](https://github.com/yuuki-kagura/rakuyomi/issues/5)
+
 ## [1.45.4](https://github.com/BaconDroid/rakuyomi/compare/v1.45.3...v1.45.4) (2026-11-17)
 
 
