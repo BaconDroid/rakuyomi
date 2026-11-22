@@ -1,3 +1,10 @@
+## [1.45.6](https://github.com/BaconDroid/rakuyomi/compare/v1.45.5...v1.45.6) (2026-11-22)
+
+
+### Bug Fixes
+
+* tolerate broken source lists and source files ([e1e33b4](https://github.com/BaconDroid/rakuyomi/commit/e1e33b4b559e55b35a668d04fda969e7d48477d4))
+
 ## [1.45.5](https://github.com/BaconDroid/rakuyomi/compare/v1.45.4...v1.45.5) (2026-11-19)
 
 
