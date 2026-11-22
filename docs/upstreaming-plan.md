@@ -207,3 +207,18 @@ spawn handling. PR12 must be re-derived against the rewritten `source_manager.rs
 its hot-reload delta cannot be applied from the old `98d16ad` base. The source-list
 URL/default-entry carve-outs are already present upstream and should be removed
 from any future PR scope. Wave 3 remains gated on wave 1 acceptance.
+
+## Current gate (2026-11-22)
+
+Phase 3 is the next planned implementation wave after Phase 1 is completely
+merged upstream. Until every Phase-1 PR is merged or explicitly closed, do not
+start Phase-3 branches, rebase its feature commits, or open its PRs. Once that
+gate clears, begin with PR12 on the then-current `upstream/main`, then PR14 and
+PR11 as independent branches; re-check their file ownership against the final
+upstream tip before splitting or porting anything.
+
+No tracking issue is created yet: the merge gate is the current dependency, and
+the existing plan remains the source of truth while upstream reviews the open
+Phase-1 PRs. Create or update a Phase-3 issue only when the gate clears and the
+three final diffs have been regenerated.
+
