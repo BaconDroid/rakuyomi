@@ -9,6 +9,14 @@ local Platform = require("Platform")
 
 local device_is_slow = Device:isKobo()
 
+-- How many consecutive failed backend restarts a socket error may trigger
+-- before the plugin stops respawning the server. Without this cap a backend
+-- that cannot boot (broken source file, missing binary, no memory) is
+-- restarted on every request, which floods the device with doomed processes
+-- until KOReader itself is killed.
+local MAX_BACKEND_RESTART_FAILURES = 3
+local backend_restart_failures = 0
+
 -- Seconds before we log a warning (slow devices) or kill the server (others)
 local SERVER_STARTUP_TIMEOUT_SECONDS = tonumber(os.getenv('RAKUYOMI_SERVER_STARTUP_TIMEOUT') or
   (device_is_slow and 10 or 5))
@@ -176,6 +184,13 @@ function Backend.requestJson(request)
     )
 
     if is_socket_error and not request._backend_retried and not request.skip_recovery then
+      if backend_restart_failures >= MAX_BACKEND_RESTART_FAILURES then
+        logger.err("backend keeps failing to start, not restarting it again:",
+          path_and_query, msg)
+
+        return response
+      end
+
       local replay_allowed = is_request_replayable(request)
 
       if is_worker_process then
@@ -195,6 +210,8 @@ function Backend.requestJson(request)
         retry_request._backend_retried = true
         return Backend.requestJson(retry_request)
       end
+
+      backend_restart_failures = backend_restart_failures + 1
     end
 
     local log_error = request.skip_recovery and logger.warn or logger.err
@@ -296,16 +313,28 @@ function Backend.initialize()
     return true, nil
   end
 
-  Backend.cleanup()
-  if Backend.server ~= nil then
-    return false, "previous backend process is still shutting down"
+  -- Starting the server forks the binary: a missing / broken binary or a
+  -- failed spawn raises, and letting that escape would take KOReader down
+  -- with it. Surface it as a normal startup failure instead.
+  local spawn_ok, server = pcall(Platform.startServer, Platform)
+  if not spawn_ok then
+    logger.err("failed to start the rakuyomi backend:", server)
+    Backend.server = nil
+
+    return false, "failed to start the rakuyomi backend: " .. tostring(server)
   end
 
-  Backend.server = Platform:startServer()
+  Backend.server = server
+
+  if server == nil then
+    logger.err("failed to start the rakuyomi backend: the platform returned no server handle")
+
+    return false, "failed to start the rakuyomi backend"
+  end
 
   if not waitUntilHttpServerIsReady() then
-    local logBuffer = Backend.server:getLogBuffer()
-    if Backend.server:stop() ~= false then
+    local logBuffer = server:getLogBuffer()
+    if server:stop() ~= false then
       Backend.server = nil
     else
       backend_stop_incomplete = true
@@ -313,6 +342,8 @@ function Backend.initialize()
 
     return false, table.concat(logBuffer, "\n")
   end
+
+  backend_restart_failures = 0
 
   return true, nil
 end
@@ -335,7 +366,7 @@ function Backend.getBackend()
 end
 
 function Backend.getLogs()
-  return logs
+  return logs or ""
 end
 
 function Backend.getInitialized()
@@ -1267,7 +1298,14 @@ end
 
 function Backend.cleanup()
   if Backend.server ~= nil then
-    if Backend.server:stop() ~= false then
+    -- The process may already be gone (OOM-killed, crashed); stopping a dead
+    -- child raises, so never let it escape into the caller.
+    local stop_ok, stop_result = pcall(Backend.server.stop, Backend.server)
+    if not stop_ok then
+      logger.warn("stopping the backend raised:", stop_result)
+    end
+
+    if not stop_ok or stop_result ~= false then
       Backend.server = nil
       backendInitialized, logs = nil, nil
       backend_stop_incomplete = false

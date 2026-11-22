@@ -35,7 +35,7 @@ use shared::{
 };
 use url::Url;
 
-const INDEX_URL: &str = "https://tachibana-shin.github.io/aidoku-sources-next/index.min.json";
+const INDEX_URL: &str = "https://aidoku-community.github.io/sources/index.min.json";
 const SOURCE_ID: &str = "en.madokami";
 const IMAGE_HOST: &str = "manga.madokami.al";
 
@@ -44,8 +44,7 @@ const IMAGE_HOST: &str = "manga.madokami.al";
 async fn image_request_carries_cookie_store_session_issue338() {
     let client = tls::client_builder().build().unwrap();
 
-    // 1. Download the en.madokami source. Use the rakuyomi index: the
-    //    aidoku-community published artifact is currently a stale 404.
+    // 1. Download the en.madokami source from the aidoku-community index.
     let index: serde_json::Value = client
         .get(INDEX_URL)
         .send()

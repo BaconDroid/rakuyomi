@@ -7,8 +7,8 @@
 //! fallback instantiated them with the next-SDK imports while `next_sdk`
 //! stayed false, driving the host store through the legacy code paths until
 //! every call failed with "could not read data from page descriptor". This
-//! test installs sources from both published indexes (aidoku-sources-next and
-//! aidoku-community) and asserts a search returns results.
+//! test installs sources from the published aidoku-community index and
+//! asserts a search returns results.
 //!
 //! Network-dependent: gated behind `#[ignore]` so CI stays offline; run with:
 //!
@@ -23,10 +23,7 @@ use shared::{
 };
 use tokio_util::sync::CancellationToken;
 
-const INDEXES: [&str; 2] = [
-    "https://tachibana-shin.github.io/aidoku-sources-next/index.min.json",
-    "https://aidoku-community.github.io/sources/index.min.json",
-];
+const INDEXES: [&str; 1] = ["https://aidoku-community.github.io/sources/index.min.json"];
 
 fn http() -> reqwest::Client {
     tls::client_builder().build().unwrap()

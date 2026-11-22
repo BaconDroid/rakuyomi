@@ -463,6 +463,14 @@ impl SourceManager {
         Ok(())
     }
 
+    /// Loads every source file in the sources folder.
+    ///
+    /// A source file that cannot be loaded (truncated download, corrupted
+    /// archive, unsupported runtime version, ...) is skipped and logged
+    /// instead of failing the whole load: one broken file used to abort the
+    /// backend at startup, which the plugin then answered by restarting the
+    /// backend in a loop until KOReader itself went down. Callers get every
+    /// source that could be loaded.
     pub fn load_all_sources(
         &mut self,
         manager: &Arc<Mutex<SourceManager>>,
@@ -480,58 +488,72 @@ impl SourceManager {
         let mut sources_by_id = HashMap::new();
         for entry in files.flatten() {
             let path = entry.path();
-            let is_lnreader = path
-                .extension()
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("js"))
-                && path.file_name().is_some_and(|name| {
-                    name.to_string_lossy()
-                        .ends_with(crate::source::lnreader::LNREADER_FILE_SUFFIX)
-                });
-            let is_mangayomi = path.file_name().is_some_and(|name| {
-                let ext = name.to_string_lossy();
-                ext.ends_with(crate::source::mangayomi::MANGA_YOMI_FILE_SUFFIX)
-                    || ext.ends_with(crate::source::mangayomi::MANGA_YOMI_JS_FILE_SUFFIX)
-            });
-            let is_keiyoushi = path.file_name().is_some_and(|name| {
-                name.to_string_lossy()
-                    .ends_with(crate::source::keiyoushi::KEIYOUSHI_FILE_SUFFIX)
-            });
 
-            let source = if is_keiyoushi {
-                // A keiyoushi APK registers one source per bundled `Source`;
-                // every one of them maps back to this file on disk.
-                for source in Source::from_keiyoushi_file(&path, self, manager)? {
-                    #[cfg(not(feature = "all"))]
-                    self.file_sources.insert(
-                        source.manifest().info.id.clone(),
-                        path.as_path().to_string_lossy().to_string(),
-                    );
-                    sources_by_id.insert(SourceId::new(source.manifest().info.id.clone()), source);
-                }
-                continue;
-            } else if is_lnreader {
-                Source::from_lnreader_file(&path, self, manager)?
-            } else if is_mangayomi {
-                Source::from_mangayomi_file(&path, self, manager)?
-            } else {
-                if !path
-                    .extension()
-                    .is_some_and(|ext| ext.eq_ignore_ascii_case("aix"))
-                {
+            let sources = match self.load_source_file(&path, manager) {
+                Ok(sources) => sources,
+                Err(error) => {
+                    log::warn!("skipping broken source file {}: {error:#}", path.display());
                     continue;
                 }
-                Source::from_aix_file(&path, self, manager)?
             };
-            #[cfg(not(feature = "all"))]
-            self.file_sources.insert(
-                source.manifest().info.id.clone(),
-                path.as_path().to_string_lossy().to_string(),
-            );
 
-            sources_by_id.insert(SourceId::new(source.manifest().info.id.clone()), source);
+            for source in sources {
+                #[cfg(not(feature = "all"))]
+                self.file_sources.insert(
+                    source.manifest().info.id.clone(),
+                    path.as_path().to_string_lossy().to_string(),
+                );
+
+                sources_by_id.insert(SourceId::new(source.manifest().info.id.clone()), source);
+            }
         }
 
         Ok(sources_by_id)
+    }
+
+    /// Loads one source file, dispatching on its extension. Returns an empty
+    /// list for files that are not sources at all.
+    fn load_source_file(
+        &self,
+        path: &Path,
+        manager: &Arc<Mutex<SourceManager>>,
+    ) -> Result<Vec<Source>> {
+        let is_lnreader = path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("js"))
+            && path.file_name().is_some_and(|name| {
+                name.to_string_lossy()
+                    .ends_with(crate::source::lnreader::LNREADER_FILE_SUFFIX)
+            });
+        let is_mangayomi = path.file_name().is_some_and(|name| {
+            let ext = name.to_string_lossy();
+            ext.ends_with(crate::source::mangayomi::MANGA_YOMI_FILE_SUFFIX)
+                || ext.ends_with(crate::source::mangayomi::MANGA_YOMI_JS_FILE_SUFFIX)
+        });
+        let is_keiyoushi = path.file_name().is_some_and(|name| {
+            name.to_string_lossy()
+                .ends_with(crate::source::keiyoushi::KEIYOUSHI_FILE_SUFFIX)
+        });
+
+        if is_keiyoushi {
+            // A keiyoushi APK registers one source per bundled `Source`;
+            // every one of them maps back to this file on disk.
+            return Source::from_keiyoushi_file(path, self, manager);
+        }
+        if is_lnreader {
+            return Ok(vec![Source::from_lnreader_file(path, self, manager)?]);
+        }
+        if is_mangayomi {
+            return Ok(vec![Source::from_mangayomi_file(path, self, manager)?]);
+        }
+        if !path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("aix"))
+        {
+            return Ok(Vec::new());
+        }
+
+        Ok(vec![Source::from_aix_file(path, self, manager)?])
     }
 
     pub fn source_path(&self, id: &SourceId) -> PathBuf {
@@ -636,6 +658,38 @@ mod tests {
         )
         .unwrap();
         zip.finish().unwrap();
+    }
+
+    /// A broken source file must not abort the load of the healthy ones.
+    ///
+    /// `load_all_sources` runs during backend startup: returning `Err` here
+    /// killed the backend, which the plugin then restarted in a loop until
+    /// KOReader itself crashed. A corrupted / truncated source file now only
+    /// removes that one source.
+    #[test]
+    fn load_all_sources_skips_broken_files() {
+        let directory = tempfile::tempdir().unwrap();
+        write_minimal_aix(&directory.path().join("en.test.aix"));
+        // A truncated / corrupted archive, e.g. an interrupted download.
+        std::fs::write(directory.path().join("broken.aix"), b"not a zip archive").unwrap();
+
+        let arc = std::sync::Arc::new(Mutex::new(
+            SourceManager::from_folder(directory.path().to_path_buf(), Settings::default())
+                .unwrap(),
+        ));
+        let mut manager =
+            SourceManager::from_folder(directory.path().to_path_buf(), Settings::default())
+                .unwrap();
+
+        let sources = manager
+            .load_all_sources(&arc)
+            .expect("broken source files must be skipped, not fatal");
+
+        assert!(
+            sources.contains_key(&SourceId::new("en.test".to_string())),
+            "the healthy source should still be loaded"
+        );
+        assert_eq!(sources.len(), 1);
     }
 
     /// A settings change must replace the live source.
