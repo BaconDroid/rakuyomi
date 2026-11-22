@@ -1,7 +1,7 @@
 # Upstreaming plan - fork > yuuki-kagura/rakuyomi
 
 Plan of match for porting fork-authored work to the new upstream
-(`upstream` = yuuki-kagura/rakuyomi, 1.43.7 as of 2026-11-17).
+(`upstream` = yuuki-kagura/rakuyomi, 1.43.8 / `2bbbc40` as of 2026-11-22).
 Constraint from the maintainer: small PRs, independent, mergeable in any order.
 
 Base for every PR: a fresh branch off `upstream/main`. Source of content: fork `main`.
@@ -179,7 +179,7 @@ reframed: #6 body now carries the commit message's detection details; #7 body ma
 coverage claim; #8/#9 intros restate full independence (each correct standalone,
 mergeable in any order) with only a one-line rebase note on the shared running()
 line; no test offer anywhere (lean per user decision). Kept: #9's isAlive shim, #8's spawn pcall,
-no further splitting. Wave 1 is closed; waves 2-3 on hold for the go.
+no further splitting. Wave 1 is closed; waves 2-3 on hold for the go. Upstream has since merged PR #5; the remaining wave-1 branches must be rebased onto the new upstream tip before further review.
 
 Backports to the fork (2026-11-19): the review fixes made on the upstream PRs were
 brought back to fork main in four commits grouped by source PR - "bring back the
@@ -190,3 +190,20 @@ restored docblock summaries), "accept form feed as an HTML tag boundary",
 (argv-free curl, WEBHOOK_SECRET charset). No tests added, mirroring the upstream
 PRs. Validation on the fork: luacheck 0/0 over 84 files, cargo test -p shared --lib
 361 pass.
+
+
+Upstream sync and fork backport (2026-11-22): upstream merged PR #5 as
+`b3303ad`, byte-identical to `dd0b62d`. Upstream then advanced to `2bbbc40`
+(1.43.8) with `80ee2ad` (broken source-list/file tolerance) and related
+follow-ups. That commit was ported to fork `main` as `f5781dd`, retaining the
+fork's recovery protocol and existing policy changes; the port adds broken-file
+skipping, restart-failure capping, spawn-failure handling, and the corresponding
+source-list updates. Validation: luacheck 0/0 over 84 files, cargo fmt clean,
+`cargo test -p shared --lib` 365 passed / 0 failed / 7 ignored.
+
+Plan impact: rebase the remaining wave-1 PRs onto upstream `2bbbc40`; PR #9
+needs a manual reconciliation with upstream's new Backend restart cap and
+spawn handling. PR12 must be re-derived against the rewritten `source_manager.rs`;
+its hot-reload delta cannot be applied from the old `98d16ad` base. The source-list
+URL/default-entry carve-outs are already present upstream and should be removed
+from any future PR scope. Wave 3 remains gated on wave 1 acceptance.
